@@ -1,0 +1,23 @@
+FastQC on raw .fastq.gz files from the sequencer
+Generate Cutadapt parameters with make_job_params.R
+Cutadapt 
+FastQC on trimmed .fastq.gz files from Cutadapt
+Generate BWA parameters with make_job_params.R
+Align to genome with bwa.sh
+  Ensure reference is built correctly, indexed, and stored on p31535
+  This should all be OK as of 6/18/26
+  - pretty quick (2hrs or so)
+Merge lane-specific .bams with bwa_merge.sh
+  - a few hours 
+Mark duplicates with GATK (gatk_markduplicates.sh)
+  - about 5.5hrs for one sample of the first 22
+Assemble QC metrics with samtools (samtools_qc.sh)
+Recalibrate bases with SNP/indel references
+  - 6hrs 
+  This is using the Mills & 1000G and dbSNP references
+Call variants with GATK HaplotypeCaller
+  - About 1d or more to run
+Build sample map with make_cohort_map_genomedbi.sh
+Build Genome DBs for each chromosome with gatk_genomicsdbiimport.sh
+Find variants with GATK GenotypeGVCFs
+Gather chromosome-specific variant-called GVCFs

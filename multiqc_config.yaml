@@ -1,0 +1,27 @@
+# Search patterns for grouping paired samples in general stats (e.g. FastQ R1/R2)
+# Affects the modules that support it (e.g. fastqc, fastp)
+table_sample_merge:
+  fastqc_read_lane:
+    - type: regex
+      pattern: "_S\\d+_L\\d{3}_R[12]_001$"
+
+  cutadapt_lane:
+    - type: regex
+      pattern: "_S\\d+_L\\d{3}$"
+
+module_order:
+  - "fastqc":
+      name: "FastQC: raw"
+      anchor: "fastqc_reports"
+  - "cutadapt"
+  - "fastqc":
+      name: "FastQC: trimmed"
+      anchor: "trimmed_fastqc_reports"
+      generalstats: false
+  - "bowtie2"
+  - "samtools"
+  - "gatk"
+  
+extra_fn_clean_trim:
+  - .coverage
+  - .bowtie2
