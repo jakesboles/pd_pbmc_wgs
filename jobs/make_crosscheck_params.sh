@@ -18,7 +18,7 @@
 
 set -euo pipefail
 
-cd /projects/b1042/Gate_Lab/boles/pd_wgs
+cd /projects/b1169/boles/pd_pbmc_wgs
 
 module load samtools/1.16.1-gcc-10.4.0
 
