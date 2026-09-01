@@ -20,7 +20,7 @@ data, BAMs, VCFs, and other large outputs are never committed (see
 ## Compute environment
 
 - Northwestern **Quest** HPC cluster, SLURM scheduler.
-- Job scripts submitted from `/projects/b1042/Gate_Lab/boles/pd_wgs`
+- Job scripts submitted from `/projects/b1169/boles/pd_pbmc_wgs`
   (allocation `b1042`, partition `genomics`, except the VCF-gather step
   which runs under allocation/partition `b1169` for more memory/tmp space).
 - Reference genome and resource bundle live on `/projects/p31535/boles`:
@@ -215,7 +215,7 @@ Each step below: script → what it does → inputs → outputs. Order matches
     tag out of that directory's `atac_possorted_bam.bam` header (rather
     than assuming it matches the directory name).
     In: `cohort.sample_map`,
-    `/projects/b1042/Gate_Lab/boles/pd_pbmc_mulitome/cellranger/<code>/outs/atac_possorted_bam.bam`.
+    `/projects/b1042/Gate_Lab/boles/pd_pbmc_multiome/cellranger/<code>/outs/atac_possorted_bam.bam`.
     Out: `crosscheck_sample_map.txt` (`wgs_sample<TAB>atac_sample`, only
     for samples with a matching multiome directory and a readable `SM`
     tag), `crosscheck_atac_bams.txt` (one matched BAM path per line, same
@@ -273,10 +273,11 @@ committed script) before treating the final VCF as covering all samples.
 ## Multiome data layout
 
 Cell Ranger ARC output for the matched scATAC/scRNA (multiome) data lives
-at `/projects/b1042/Gate_Lab/boles/pd_pbmc_mulitome/cellranger` (note: that
-`mulitome` spelling is the real directory name on disk, not a typo to
-"fix"), one subdirectory per multiome library, named with the sample code
-minus the WGS `JSB` prefix (e.g. `100-1` for WGS sample `JSB100-1`). Each
+at `/projects/b1042/Gate_Lab/boles/pd_pbmc_multiome/cellranger` — note this
+stays on `b1042`; only the WGS working directory itself moved to `b1169`
+(see "Compute environment" above) — one subdirectory per multiome library,
+named with the sample code minus the WGS `JSB` prefix (e.g. `100-1` for
+WGS sample `JSB100-1`). Each
 subdirectory follows the standard `cellranger-arc count` layout; the files
 relevant here are `outs/atac_possorted_bam.bam` (+ `.bai`), used for
 fingerprinting, and eventually `outs/gex_possorted_bam.bam` and the

@@ -7,12 +7,12 @@
 #SBATCH --ntasks-per-node 16
 #SBATCH --mem 32G
 #SBATCH --time 48:00:00
-#SBATCH --output /projects/b1042/Gate_Lab/boles/pd_wgs/logs/%x_%A_%a.log
+#SBATCH --output /projects/b1169/boles/pd_pbmc_wgs/logs/%x_%A_%a.log
 #SBATCH --verbose
 
 module load cutadapt/4.2
 
-cd /projects/b1042/Gate_Lab/boles/pd_wgs
+cd /projects/b1169/boles/pd_pbmc_wgs
 
 PARAMS_FILE="cutadapt_params.txt"
 

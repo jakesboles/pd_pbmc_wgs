@@ -1,6 +1,6 @@
 library(tidyverse)
 
-setwd("/projects/b1042/Gate_Lab/boles/pd_wgs")
+setwd("/projects/b1169/boles/pd_pbmc_wgs")
 
 files <- list.files("fastq")
 
