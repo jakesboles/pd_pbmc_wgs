@@ -1,6 +1,7 @@
 vqsr/*
 bwa_bam/*
 bwa_reports/*
+crosscheck/*
 cutadapt_logs/*
 gathered_genotyped_gvcf/*
 gatk_reports/*

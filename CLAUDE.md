@@ -45,18 +45,29 @@ listing into every downstream job's parameter file. It is **run manually
 
 | File | Grain | Columns | Consumed by |
 |---|---|---|---|
-| `bowtie_params_id.txt` | one row per **sample** (unique ID prefix before first `_`) | sample ID only | `bwa_merge.sh`, `gatk_markduplicates.sh`, `samtools_qc.sh`, `gatk_baserecalibrator.sh`, `gatk_haplotype_caller*.sh`, `bowtie2.sh` |
-| `bowtie_params_r1.txt` / `_r2.txt` | one row per sample | comma-joined list of that sample's R1/R2 files across all lanes | `bowtie2.sh` (legacy path, see below) |
+| `bowtie_params_id.txt` | one row per **sample** (unique ID prefix before first `_`) | sample ID only | `bwa_merge.sh`, `gatk_markduplicates.sh`, `samtools_qc.sh`, `gatk_baserecalibrator.sh`, `gatk_haplotype_caller.sh` |
+| `bowtie_params_r1.txt` / `_r2.txt` | one row per sample | comma-joined list of that sample's R1/R2 files across all lanes | unused — written for the now-removed bowtie2 path (see "Removed: legacy bowtie2 path" below) |
 | `cutadapt_params.txt` | one row per **lane-level fastq pair** | `R1_file,R2_file,replicate_id` | `cutadapt.sh` |
 | `bwa_params.txt` | one row per lane-level fastq pair | `R1_file,R2_file,replicate_id,lane,sample` | `bwa.sh` |
 
 Despite the `bowtie_*` naming, `bowtie_params_id.txt` is the de facto
 **master sample manifest** used throughout the bwa/GATK production path —
 this is a naming artifact from an earlier alignment approach, not a sign
-that bowtie2 is actually in use (see "Known quirks" below).
+that bowtie2 is actually in use (see "Removed: legacy bowtie2 path" below).
 
 Cohort scale as encoded in current array sizes: **1804** raw fastq files
 (902 lane-level R1/R2 pairs) collapsing down to **121** unique samples.
+
+Unlike the large biological outputs (BAMs, VCFs — see `.gitignore`), these
+small text manifest/parameter files are committed to the repo as they're
+generated, since they're needed to reproduce or re-run any given step.
+`bwa_params.txt`, `cutadapt_params.txt`, `chromosomes.txt` (the
+chr1-22+chrX list consumed by steps 13-14), and `cohort.sample_map` (the
+`sample<TAB>gvcf_path` map built by step 12, see below) are all currently
+checked in this way. `bowtie_params_id.txt`/`_r1.txt`/`_r2.txt` are not
+checked in — `cohort.sample_map` now serves as the more up-to-date,
+121-sample master list for anything that needs it going forward (e.g. the
+crosscheck-fingerprinting crosswalk below).
 
 ## Pipeline steps
 
@@ -133,10 +144,6 @@ Each step below: script → what it does → inputs → outputs. Order matches
     calling in GVCF mode.
     In: `bwa_bam/<sample>.bqsr.bam` (array 1-121).
     Out: `haplotype_caller/<sample>.output.g.vcf.gz`.
-    *(`jobs/gatk_haplotype_caller_test.sh` is a leftover dev/test variant
-    that reads from `bam/<sample>.sorted.bam` — the bowtie2 output
-    directory — instead of the production `bwa_bam/*.bqsr.bam`. It is not
-    part of the production path; treat it as scratch/debug only.)*
 
 12. **`jobs/make_cohort_map_genomedbi.sh`** — build the GATK sample map
     (`sample<TAB>gvcf_path`) from all per-sample GVCFs. Plain shell, run
@@ -199,18 +206,51 @@ Each step below: script → what it does → inputs → outputs. Order matches
     — this is the **final, analysis-ready cohort VCF**: PASS-only,
     biallelic, left-aligned, hg38, GATK contig naming.
 
-### Legacy/unused: bowtie2 path
+21. **`jobs/make_crosscheck_params.sh`** — build the WGS↔scATAC crosswalk
+    that `gatk_crosscheckfingerprints.sh` needs. Plain shell, run manually
+    (not a SLURM array), same role as `make_cohort_map_genomedbi.sh`.
+    Repurposes `cohort.sample_map` as the WGS sample list; for each WGS
+    sample it strips the `JSB` prefix to get the Cell Ranger ARC output
+    directory name (e.g. `JSB100-1` → `100-1`), then reads the real `SM`
+    tag out of that directory's `atac_possorted_bam.bam` header (rather
+    than assuming it matches the directory name).
+    In: `cohort.sample_map`,
+    `/projects/b1042/Gate_Lab/boles/pd_pbmc_mulitome/cellranger/<code>/outs/atac_possorted_bam.bam`.
+    Out: `crosscheck_sample_map.txt` (`wgs_sample<TAB>atac_sample`, only
+    for samples with a matching multiome directory and a readable `SM`
+    tag), `crosscheck_atac_bams.txt` (one matched BAM path per line, same
+    order/count as the sample map), `crosscheck_missing_atac.txt` (WGS
+    samples with no matching Cell Ranger ARC directory).
 
-`jobs/bowtie2_build.sh` and `jobs/bowtie2.sh` build a Bowtie2 index and
-align trimmed reads with Bowtie2, writing to `bam/` and
-`bowtie2_reports/`. **`workflow.txt` never references this path** — the
-production aligner is `bwa-mem2` (step 6). These two scripts, plus the
-`bam/`-reading `gatk_haplotype_caller_test.sh`, appear to be an earlier
-alignment approach that was superseded by BWA but left in the repo. The
-`multiqc_config.yaml` module list still includes a `bowtie2` section,
-consistent with this being a genuine (if abandoned) earlier pass rather
-than dead code from a typo. Don't build on the bowtie2 outputs for
-anything downstream; treat `bwa_bam/*` as the only production alignments.
+22. **`jobs/gatk_crosscheckfingerprints.sh`** — `gatk
+    CrosscheckFingerprints`, comparing each WGS sample's genotypes in the
+    cohort VCF against its matched scATAC BAM's genotype-likelihood
+    signal at haplotype-map SNP sites, to confirm donor identity between
+    the two datasets. Uses `--INPUT_SAMPLE_MAP` to rename each VCF sample
+    to its scATAC `SM` tag for comparison (so the `JSB`-prefix mismatch
+    doesn't block matching), `--CROSSCHECK_BY SAMPLE` (the GATK default is
+    `READGROUP`, which would compare below the level we want), and
+    `--EXIT_CODE_WHEN_MISMATCH 0` so a genotype mismatch — a real possible
+    QC finding, e.g. a sample swap — doesn't get treated as a job failure.
+    In: `vqsr/cohort.pass.normalized.vcf.gz`, `crosscheck_sample_map.txt`,
+    `crosscheck_atac_bams.txt`,
+    `/projects/p31535/boles/Homo_sapiens_assembly38.haplotype_database.txt`.
+    Out: `crosscheck/cohort_vs_atac.crosscheck_metrics` — per-sample-pair
+    `LOD_SCORE` and `RESULT` (e.g. `EXPECTED_MATCH`,
+    `EXPECTED_MISMATCH`) to review before trusting any WGS↔multiome sample
+    pairing downstream.
+
+### Removed: legacy bowtie2 path
+
+`jobs/bowtie2_build.sh`, `jobs/bowtie2.sh`, and the dev/test
+`jobs/gatk_haplotype_caller_test.sh` (which read from the bowtie2 output
+directory `bam/` instead of the production `bwa_bam/*.bqsr.bam`) have been
+removed from the repo — `workflow.txt` never referenced this path, and the
+production aligner has always been `bwa-mem2` (step 6). `bowtie_params_r1.txt`/
+`_r2.txt`, which only ever fed `bowtie2.sh`, are correspondingly unused now
+(see "Sample/lane bookkeeping" above). Note `multiqc_config.yaml`'s module
+list still includes a `bowtie2` section; that's now stale and can be
+dropped whenever MultiQC gets its own SLURM script.
 
 ## Current status (as of last review)
 
@@ -230,15 +270,35 @@ restricted to samples `59,99` rather than the full `1-121` used by steps
 merged/dedup'd/QC'd (and the array bounds just weren't widened in the
 committed script) before treating the final VCF as covering all samples.
 
+## Multiome data layout
+
+Cell Ranger ARC output for the matched scATAC/scRNA (multiome) data lives
+at `/projects/b1042/Gate_Lab/boles/pd_pbmc_mulitome/cellranger` (note: that
+`mulitome` spelling is the real directory name on disk, not a typo to
+"fix"), one subdirectory per multiome library, named with the sample code
+minus the WGS `JSB` prefix (e.g. `100-1` for WGS sample `JSB100-1`). Each
+subdirectory follows the standard `cellranger-arc count` layout; the files
+relevant here are `outs/atac_possorted_bam.bam` (+ `.bai`), used for
+fingerprinting, and eventually `outs/gex_possorted_bam.bam` and the
+`filtered_feature_bc_matrix*`/`atac_fragments.tsv.gz` outputs for the QTL
+mapping stage itself.
+
 ## Next step
 
-**GATK `CrosscheckFingerprints`**, comparing the filtered WGS cohort VCF
-(`vqsr/cohort.pass.normalized.vcf.gz`) against the possorted BAM from the
-matched scATAC-seq (multiome) data, per sample. This checks that the donor
-identity encoded in each WGS sample's genotypes matches the genotype
-signal recoverable from that donor's scATAC reads — a prerequisite for
-confidently pairing WGS genotypes to single-cell RNA/ATAC data before QTL
-mapping. This will need a haplotype map (e.g. GATK's
-`hg38_v0_Homo_sapiens_assembly38.haplotype_database.txt` or equivalent)
-and a sample-to-BAM crosswalk between WGS sample IDs and scATAC library
-IDs, neither of which exists in this repo yet.
+Run `jobs/make_crosscheck_params.sh` then `jobs/gatk_crosscheckfingerprints.sh`
+(steps 21-22 above) and review `crosscheck/cohort_vs_atac.crosscheck_metrics`
+for any `EXPECTED_MATCH` sample pair that actually comes back as a
+mismatch (or vice versa) before trusting any WGS↔multiome sample pairing.
+Two things to double check before/while running:
+
+- The haplotype map path
+  (`/projects/p31535/boles/Homo_sapiens_assembly38.haplotype_database.txt`)
+  — confirm this exact path and filename exist on `p31535` as written.
+- `crosscheck_missing_atac.txt` (written by `make_crosscheck_params.sh`) —
+  any WGS sample listed there has no matching Cell Ranger ARC directory
+  and won't be checked; confirm whether that's expected (e.g. a WGS-only
+  sample with no multiome library) or a naming mismatch to fix.
+
+Once identity is confirmed, the actual QTL mapping work (integrating
+`vqsr/cohort.pass.normalized.vcf.gz` genotypes with the multiome
+scRNA/scATAC data) has no scripts in this repo yet.
