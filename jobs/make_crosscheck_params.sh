@@ -22,7 +22,7 @@ cd /projects/b1169/boles/pd_pbmc_wgs
 
 module load samtools/1.16.1-gcc-10.4.0
 
-CELLRANGER_DIR="/projects/b1042/Gate_Lab/boles/pd_pbmc_mulitome/cellranger"
+CELLRANGER_DIR="/projects/b1042/Gate_Lab/boles/pd_pbmc_multiome/cellranger"
 
 SAMPLE_MAP_OUT="crosscheck_sample_map.txt"
 BAM_LIST_OUT="crosscheck_atac_bams.txt"
