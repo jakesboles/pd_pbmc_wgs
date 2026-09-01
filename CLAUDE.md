@@ -226,19 +226,37 @@ Each step below: script → what it does → inputs → outputs. Order matches
     CrosscheckFingerprints`, comparing each WGS sample's genotypes in the
     cohort VCF against its matched scATAC BAM's genotype-likelihood
     signal at haplotype-map SNP sites, to confirm donor identity between
-    the two datasets. Uses `--INPUT_SAMPLE_MAP` to rename each VCF sample
-    to its scATAC `SM` tag for comparison (so the `JSB`-prefix mismatch
-    doesn't block matching), `--CROSSCHECK_BY SAMPLE` (the GATK default is
-    `READGROUP`, which would compare below the level we want), and
-    `--EXIT_CODE_WHEN_MISMATCH 0` so a genotype mismatch — a real possible
-    QC finding, e.g. a sample swap — doesn't get treated as a job failure.
+    the two datasets. A SLURM array, **one task per WGS/ATAC sample pair**
+    (array 1-121, one line of `crosscheck_sample_map.txt`/
+    `crosscheck_atac_bams.txt` per task) rather than one job comparing the
+    VCF against all matched BAMs at once: `CrosscheckFingerprints`
+    requires every file it fingerprints together in a single invocation to
+    share an identical sequence dictionary, and at least one ATAC BAM in
+    this cohort was processed against a Cell Ranger ARC reference build
+    with a different contig order than the rest — a real cross-batch
+    reference inconsistency, first surfaced as a job-killing
+    `SequenceListsDifferException` when all 121 BAMs were batched into one
+    call. Splitting into an array isolates that failure to whichever
+    sample(s) it actually affects instead of blocking the whole cohort.
+    Uses `--INPUT_SAMPLE_MAP` to rename each VCF sample to its scATAC `SM`
+    tag for comparison (so the `JSB`-prefix mismatch doesn't block
+    matching; passing the full map every task is harmless since only that
+    task's one pair is actually present in both INPUT and SECOND_INPUT),
+    `--CROSSCHECK_BY SAMPLE` (the GATK default is `READGROUP`, which would
+    compare below the level we want), and `--EXIT_CODE_WHEN_MISMATCH 0` so
+    a genotype mismatch — a real possible QC finding, e.g. a sample swap —
+    doesn't get treated as a task failure. A task that errors out entirely
+    (rather than completing and reporting an `EXPECTED_MISMATCH` row)
+    means that sample's ATAC BAM needs separate follow-up — check its Cell
+    Ranger ARC reference package/version against the others before
+    trusting its multiome data downstream.
     In: `vqsr/cohort.pass.normalized.vcf.gz`, `crosscheck_sample_map.txt`,
     `crosscheck_atac_bams.txt`,
     `/projects/p31535/boles/Homo_sapiens_assembly38.haplotype_database.txt`.
-    Out: `crosscheck/cohort_vs_atac.crosscheck_metrics` — per-sample-pair
-    `LOD_SCORE` and `RESULT` (e.g. `EXPECTED_MATCH`,
-    `EXPECTED_MISMATCH`) to review before trusting any WGS↔multiome sample
-    pairing downstream.
+    Out: `crosscheck/<wgs_sample>.crosscheck_metrics`, one file per
+    sample pair — each with a `LOD_SCORE` and `RESULT` (e.g.
+    `EXPECTED_MATCH`, `EXPECTED_MISMATCH`) to review before trusting any
+    WGS↔multiome sample pairing downstream.
 
 ### Removed: legacy bowtie2 path
 
@@ -286,19 +304,35 @@ mapping stage itself.
 
 ## Next step
 
-Run `jobs/make_crosscheck_params.sh` then `jobs/gatk_crosscheckfingerprints.sh`
-(steps 21-22 above) and review `crosscheck/cohort_vs_atac.crosscheck_metrics`
-for any `EXPECTED_MATCH` sample pair that actually comes back as a
-mismatch (or vice versa) before trusting any WGS↔multiome sample pairing.
-Two things to double check before/while running:
+`jobs/make_crosscheck_params.sh` has been run successfully — all 121 WGS
+samples matched a Cell Ranger ARC directory (`crosscheck_sample_map.txt`
+and `crosscheck_atac_bams.txt` are both populated, 121 lines each;
+`crosscheck_missing_atac.txt` came back empty and was removed).
 
+Run `jobs/gatk_crosscheckfingerprints.sh` (step 22 above, a 1-121 SLURM
+array) and review `crosscheck/<wgs_sample>.crosscheck_metrics` for each
+sample: any `EXPECTED_MATCH` that actually comes back as a mismatch (or
+vice versa) needs review before trusting that WGS↔multiome sample
+pairing. Two things to watch for:
+
+- **Any array task that fails outright** (job error, not just an
+  unexpected `RESULT` value in its output file) — this already happened
+  once when the job was a single non-array invocation comparing the VCF
+  against all 121 BAMs at once: at least one ATAC BAM's Cell Ranger ARC
+  reference build has a different contig order than the rest, which
+  crashed that shared invocation with a
+  `SequenceUtil$SequenceListsDifferException`. The array design isolates
+  this to just the affected task(s), but whichever sample(s) still fail
+  need the underlying reference-build mismatch tracked down (e.g. compare
+  `cellranger-arc` version/reference package across `_versions` or
+  `_invocation` in each library's output directory) before that sample's
+  multiome data can be trusted downstream — a contig-order mismatch like
+  this could also matter for the QTL mapping stage itself, not just this
+  identity check.
 - The haplotype map path
   (`/projects/p31535/boles/Homo_sapiens_assembly38.haplotype_database.txt`)
-  — confirm this exact path and filename exist on `p31535` as written.
-- `crosscheck_missing_atac.txt` (written by `make_crosscheck_params.sh`) —
-  any WGS sample listed there has no matching Cell Ranger ARC directory
-  and won't be checked; confirm whether that's expected (e.g. a WGS-only
-  sample with no multiome library) or a naming mismatch to fix.
+  — already confirmed to exist and work (the successful VCF fingerprinting
+  step of the failed run above got this far without complaint).
 
 Once identity is confirmed, the actual QTL mapping work (integrating
 `vqsr/cohort.pass.normalized.vcf.gz` genotypes with the multiome
