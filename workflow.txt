@@ -21,3 +21,8 @@ Build sample map with make_cohort_map_genomedbi.sh
 Build Genome DBs for each chromosome with gatk_genomicsdbiimport.sh
 Find variants with GATK GenotypeGVCFs
 Gather chromosome-specific variant-called GVCFs
+VariantRecalibrator with SNPs
+Apply SNP VQSR model
+VariantRecalibrator with indels
+Apply indel VQSR model
+Filter, normalize, and split multi-allelic sites

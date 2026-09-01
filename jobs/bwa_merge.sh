@@ -3,7 +3,7 @@
 #SBATCH --partition genomics
 #SBATCH --job-name bwa_merge
 #SBATCH --nodes 1
-#SBATCH --array=1-121
+#SBATCH --array=59,99
 #SBATCH --ntasks-per-node 16
 #SBATCH --mem 64G
 #SBATCH --time 48:00:00
@@ -19,7 +19,7 @@ PARAMS_FILE="bowtie_params_id.txt"
 
 sample=$(sed -n "${SLURM_ARRAY_TASK_ID}p" $PARAMS_FILE | cut -f1 -d,)
 
-files=$(ls "$PWD"/bwa_bam/* | grep ${sample} | grep ".bai" -Ev)
+files=$(ls "$PWD"/bwa_bam/* | grep "${sample}[_]" | grep ".bai" -Ev)
 
 echo ${sample}
 echo ${files}

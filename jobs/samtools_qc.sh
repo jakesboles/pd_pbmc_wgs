@@ -3,7 +3,7 @@
 #SBATCH --partition genomics
 #SBATCH --job-name samtools_qc
 #SBATCH --nodes 1
-#SBATCH --array=1-121
+#SBATCH --array=59,99
 #SBATCH --ntasks-per-node 16
 #SBATCH --mem 64G
 #SBATCH --time 48:00:00

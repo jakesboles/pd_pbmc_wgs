@@ -1,10 +1,10 @@
 #!/bin/bash
-#SBATCH --account b1042
-#SBATCH --partition genomics
+#SBATCH --account b1169
+#SBATCH --partition b1169
 #SBATCH --job-name gather_genotype_gvcfs
 #SBATCH --nodes 1
 #SBATCH --ntasks-per-node 16
-#SBATCH --mem 64G
+#SBATCH --mem 128G
 #SBATCH --time 48:00:00
 #SBATCH --output /projects/b1042/Gate_Lab/boles/pd_wgs/logs/%x_%A.log
 #SBATCH --verbose

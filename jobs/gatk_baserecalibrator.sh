@@ -3,7 +3,7 @@
 #SBATCH --partition genomics
 #SBATCH --job-name gatk_recalibrate
 #SBATCH --nodes 1
-#SBATCH --array=2-22
+#SBATCH --array=1-121
 #SBATCH --ntasks-per-node 16
 #SBATCH --mem 64G
 #SBATCH --time 48:00:00

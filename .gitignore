@@ -1,0 +1,14 @@
+vqsr/*
+bwa_bam/*
+bwa_reports/*
+cutadapt_logs/*
+gathered_genotyped_gvcf/*
+gatk_reports/*
+genomics_db/*
+genotyped_gvcfs/*
+haplotype_caller/*
+logs/*
+multiqc_data/*
+*.html
+samtools_reports/*
+vqsr/*

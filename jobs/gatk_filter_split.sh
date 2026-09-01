@@ -1,0 +1,38 @@
+#!/bin/bash
+#SBATCH --account b1042
+#SBATCH --partition genomics
+#SBATCH --job-name vqsr_snp_recal
+#SBATCH --nodes 1
+#SBATCH --ntasks-per-node 16
+#SBATCH --mem 128G
+#SBATCH --time 48:00:00
+#SBATCH --output /projects/b1042/Gate_Lab/boles/pd_wgs/logs/%x_%A.log
+#SBATCH --verbose
+
+cd /projects/b1042/Gate_Lab/boles/pd_wgs
+
+module load samtools/1.16.1-gcc-10.4.0
+module load gatk/4.4.0.0
+module load R/4.4.0
+
+# Hardcode Java 17 explicitly — don't trust PATH resolution
+JAVA17_BIN=/software/java/jdk-17.0.2+8/bin/java    # <-- fill in from module show output
+
+${JAVA17_BIN} -version   # confirm this reports 17.0.2 before proceeding
+
+RESOURCE_DIR="/projects/p31535/boles"
+OUT_DIR="vqsr"
+
+# ---- Step 6: drop non-PASS sites ----
+${JAVA17_BIN} -Xmx12g -jar ${GATK_DIR}/gatk-package-4.4.0.0-local.jar SelectVariants \
+   -R ${RESOURCE_DIR}/Homo_sapiens_assembly38.fasta \
+   -V ${OUT_DIR}/cohort.recalibrated.vcf.gz \
+   --exclude-filtered \
+   -O ${OUT_DIR}/cohort.pass.vcf.gz
+
+# ---- Step 7: left-align and split multiallelic sites ----
+${JAVA17_BIN} -Xmx16g -jar ${GATK_DIR}/gatk-package-4.4.0.0-local.jar LeftAlignAndTrimVariants \
+   -R ${RESOURCE_DIR}/Homo_sapiens_assembly38.fasta \
+   -V ${OUT_DIR}/cohort.pass.vcf.gz \
+   --split-multi-allelics \
+   -O ${OUT_DIR}/cohort.pass.normalized.vcf.gz
