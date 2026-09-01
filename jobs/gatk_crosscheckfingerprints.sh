@@ -30,6 +30,15 @@
 # dictionary check for every sample. See subset_reorder_atac_bams.sh for
 # the fix (subset to fingerprinting sites, then reorder to match).
 #
+# INPUT points at a per-sample VCF subset (SelectVariants below), not the
+# full 121-sample cohort VCF -- passing the whole cohort VCF as INPUT
+# every task means CrosscheckFingerprints (in CHECK_SAME_SAMPLE mode)
+# logs an ERROR for every one of the ~120 other samples that has no
+# counterpart in this task's single-BAM SECOND_INPUT ("sample X is
+# missing from RIGHT group"), which is harmless to the result but buries
+# each task's log in noise. Subsetting INPUT down to just this task's one
+# sample first avoids that.
+#
 # NOTE: --array bounds above must match `wc -l crosscheck_atac_bams.txt`
 # -- update both if the crosswalk is regenerated with a different sample
 # count.
@@ -40,34 +49,46 @@ cd /projects/b1169/boles/pd_pbmc_wgs
 
 module load gatk/4.4.0.0
 
+REFERENCE="/projects/p31535/boles/Homo_sapiens_assembly38.fasta"
 HAPLOTYPE_MAP="/projects/p31535/boles/Homo_sapiens_assembly38.haplotype_database.txt"
 VCF="vqsr/cohort.pass.normalized.vcf.gz"
+SITES_BED="haplotype_sites.bed"
 
-mkdir -p crosscheck
+mkdir -p crosscheck crosscheck/vcf_subset
 
 wgs_sample=$(sed -n "${SLURM_ARRAY_TASK_ID}p" crosscheck_sample_map.txt | cut -f1)
 bam=$(sed -n "${SLURM_ARRAY_TASK_ID}p" crosscheck_atac_bams.txt)
 reordered_bam="crosscheck/atac_subset/${wgs_sample}.subset.reordered.bam"
+subset_vcf="crosscheck/vcf_subset/${wgs_sample}.vcf.gz"
 
 echo "${wgs_sample}"
 echo "${bam}"
 echo "${reordered_bam}"
 
-# INPUT_SAMPLE_MAP renames each WGS VCF sample (e.g. JSB100-1) to the
+echo "Subsetting cohort VCF to this sample and the haplotype-map sites"
+
+gatk SelectVariants \
+  -R "${REFERENCE}" \
+  -V "${VCF}" \
+  -sn "${wgs_sample}" \
+  -L "${SITES_BED}" \
+  -O "${subset_vcf}"
+
+# INPUT_SAMPLE_MAP renames the WGS VCF sample (e.g. JSB100-1) to the
 # scATAC sample name recorded in the matching BAM's RG SM tag (e.g.
 # 100-1), so CHECK_SAME_SAMPLE can pair them up despite the "JSB" prefix
-# mismatch -- passing the full map every task is harmless, since only the
-# one WGS/ATAC pair present in both this task's INPUT and SECOND_INPUT
-# actually gets compared. CROSSCHECK_BY is forced to SAMPLE (default is
-# READGROUP) so the WGS sample is compared once against the whole matched
-# BAM rather than once per read group. EXIT_CODE_WHEN_MISMATCH is set to
-# 0 because a genotype mismatch here is an expected possible QC finding
-# (e.g. a sample swap) to review in the output metrics, not a pipeline
-# failure -- EXIT_CODE_WHEN_NO_VALID_CHECKS is left at its default so a
-# real misconfiguration (e.g. no overlapping fingerprinting sites) still
-# fails the task loudly.
+# mismatch -- passing the full 121-row map is harmless here since the
+# subset VCF above only has the one sample column for it to apply to.
+# CROSSCHECK_BY is forced to SAMPLE (default is READGROUP) so the WGS
+# sample is compared once against the whole matched BAM rather than once
+# per read group. EXIT_CODE_WHEN_MISMATCH is set to 0 because a genotype
+# mismatch here is an expected possible QC finding (e.g. a sample swap)
+# to review in the output metrics, not a pipeline failure --
+# EXIT_CODE_WHEN_NO_VALID_CHECKS is left at its default so a real
+# misconfiguration (e.g. no overlapping fingerprinting sites) still fails
+# the task loudly.
 gatk CrosscheckFingerprints \
-  --INPUT "${VCF}" \
+  --INPUT "${subset_vcf}" \
   --SECOND_INPUT "${reordered_bam}" \
   --INPUT_SAMPLE_MAP crosscheck_sample_map.txt \
   --HAPLOTYPE_MAP "${HAPLOTYPE_MAP}" \

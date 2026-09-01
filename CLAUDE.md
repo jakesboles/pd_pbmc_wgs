@@ -279,23 +279,33 @@ Each step below: script → what it does → inputs → outputs. Order matches
     comparison only fails that one task instead of the whole cohort.
     `--SECOND_INPUT` points at the *reordered subset* BAM from step 23
     (`crosscheck/atac_subset/<wgs_sample>.subset.reordered.bam`), not the
-    raw `atac_possorted_bam.bam` — see step 23 for why. Uses
-    `--INPUT_SAMPLE_MAP` to rename each VCF sample to its scATAC `SM` tag
+    raw `atac_possorted_bam.bam` — see step 23 for why. Before
+    fingerprinting, each task first runs `gatk SelectVariants -sn
+    <wgs_sample> -L haplotype_sites.bed` to pull just that one sample out
+    of the 121-sample cohort VCF; `--INPUT` is that per-sample subset, not
+    the full cohort VCF — passing the whole cohort VCF as `INPUT` every
+    task technically still produces the correct result, but
+    `CrosscheckFingerprints` (in `CHECK_SAME_SAMPLE` mode) logs an `ERROR`
+    for every one of the ~120 *other* samples that has no counterpart in
+    that task's single-BAM `SECOND_INPUT` (`sample X is missing from
+    RIGHT group`), burying each task's log in harmless noise. Uses
+    `--INPUT_SAMPLE_MAP` to rename the VCF sample to its scATAC `SM` tag
     for comparison (so the `JSB`-prefix mismatch doesn't block matching;
     passing the full map every task is harmless since only that task's
-    one pair is actually present in both INPUT and SECOND_INPUT),
+    one pair is actually present in both INPUT and SECOND_INPUT now),
     `--CROSSCHECK_BY SAMPLE` (the GATK default is `READGROUP`, which would
     compare below the level we want), and `--EXIT_CODE_WHEN_MISMATCH 0` so
     a genotype mismatch — a real possible QC finding, e.g. a sample swap —
     doesn't get treated as a task failure.
-    In: `vqsr/cohort.pass.normalized.vcf.gz`, `crosscheck_sample_map.txt`,
-    `crosscheck_atac_bams.txt`,
+    In: `vqsr/cohort.pass.normalized.vcf.gz`, `haplotype_sites.bed`,
+    `crosscheck_sample_map.txt`, `crosscheck_atac_bams.txt`,
     `crosscheck/atac_subset/<wgs_sample>.subset.reordered.bam` (step 23),
     `/projects/p31535/boles/Homo_sapiens_assembly38.haplotype_database.txt`.
-    Out: `crosscheck/<wgs_sample>.crosscheck_metrics`, one file per
-    sample pair — each with a `LOD_SCORE` and `RESULT` (e.g.
-    `EXPECTED_MATCH`, `EXPECTED_MISMATCH`) to review before trusting any
-    WGS↔multiome sample pairing downstream.
+    Out: `crosscheck/vcf_subset/<wgs_sample>.vcf.gz` (intermediate),
+    `crosscheck/<wgs_sample>.crosscheck_metrics` — one file per sample
+    pair, each with a `LOD_SCORE` and `RESULT` (e.g. `EXPECTED_MATCH`,
+    `EXPECTED_MISMATCH`) to review before trusting any WGS↔multiome
+    sample pairing downstream.
 
 ### Removed: legacy bowtie2 path
 
@@ -353,7 +363,9 @@ Run `jobs/make_haplotype_sites_bed.sh`, then `jobs/subset_reorder_atac_bams.sh`
 22-24 above) and review `crosscheck/<wgs_sample>.crosscheck_metrics` for
 each sample: any `EXPECTED_MATCH` that actually comes back as a mismatch
 (or vice versa) needs review before trusting that WGS↔multiome sample
-pairing.
+pairing. The pipeline has been validated end-to-end on one sample
+(`JSB100-1` ↔ `100-1`, `RESULT=EXPECTED_MATCH`, `LOD_SCORE≈47.1`) — the
+remaining work is running the full 1-121 array.
 
 Background on why steps 22-23 exist: the first attempt at
 `gatk_crosscheckfingerprints.sh` (as a single non-array job comparing the
