@@ -6,7 +6,7 @@
 #SBATCH --ntasks-per-node 16
 #SBATCH --mem 64G
 #SBATCH --time 24:00:00
-#SBATCH --output /projects/b1042/Gate_Lab/boles/pd_wgs/logs/%x_%A.log
+#SBATCH --output /projects/b1169/boles/pd_pbmc_wgs/logs/%x_%A.log
 #SBATCH --verbose
 
 # Verifies donor identity between the filtered WGS cohort VCF and each
@@ -16,7 +16,7 @@
 
 set -euo pipefail
 
-cd /projects/b1042/Gate_Lab/boles/pd_wgs
+cd /projects/b1169/boles/pd_pbmc_wgs
 
 module load gatk/4.4.0.0
 

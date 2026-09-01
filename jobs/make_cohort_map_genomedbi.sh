@@ -1,4 +1,4 @@
-cd /projects/b1042/Gate_Lab/boles/pd_wgs
+cd /projects/b1169/boles/pd_pbmc_wgs
 
 ls haplotype_caller/*.g.vcf.gz | while read gvcf; do   
   sample=$(basename "$gvcf" .output.g.vcf.gz);   

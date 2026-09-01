@@ -7,12 +7,12 @@
 #SBATCH --ntasks-per-node 16
 #SBATCH --mem 64G
 #SBATCH --time 48:00:00
-#SBATCH --output /projects/b1042/Gate_Lab/boles/pd_wgs/logs/%x_%A.log
+#SBATCH --output /projects/b1169/boles/pd_pbmc_wgs/logs/%x_%A.log
 #SBATCH --verbose
 
 module load samtools/1.16.1-gcc-10.4.0
 
-cd /projects/b1042/Gate_Lab/boles/pd_wgs
+cd /projects/b1169/boles/pd_pbmc_wgs
 
 SAMPLE=$(sed -n "${SLURM_ARRAY_TASK_ID}p" "bowtie_params_id.txt")
 
