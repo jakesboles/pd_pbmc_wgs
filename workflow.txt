@@ -26,3 +26,5 @@ Apply SNP VQSR model
 VariantRecalibrator with indels
 Apply indel VQSR model
 Filter, normalize, and split multi-allelic sites
+Build WGS<->scATAC crosswalk with make_crosscheck_params.sh
+Verify donor identity with GATK CrosscheckFingerprints
