@@ -13,23 +13,22 @@
 # Verifies donor identity between the filtered WGS cohort VCF and each
 # matched scATAC-seq (Cell Ranger ARC) possorted BAM, using GATK's
 # haplotype-map-based fingerprinting. Requires crosscheck_sample_map.txt
-# and crosscheck_atac_bams.txt from make_crosscheck_params.sh to exist,
-# with matching row order/count (one array task per line/pair).
+# and crosscheck_atac_bams.txt from make_crosscheck_params.sh, AND the
+# reordered subset BAMs from subset_reorder_atac_bams.sh, to already
+# exist -- with matching row order/count (one array task per line/pair).
 #
 # One task per sample pair, rather than one job comparing the VCF against
-# all matched BAMs at once: CrosscheckFingerprints requires every file it
-# fingerprints together to share an identical sequence dictionary, and at
-# least one ATAC BAM in this cohort was evidently processed against a
-# Cell Ranger ARC reference build with a different contig order than the
-# rest (a real cross-batch reference inconsistency, not a bug here) --
-# batching all 121 BAMs into one CrosscheckFingerprints call meant that
-# one mismatched BAM's dictionary error killed the whole job instead of
-# just that one comparison. Splitting into an array isolates the failure
-# to whichever sample(s) it actually affects; any task that errors out
-# (as opposed to completing and reporting an EXPECTED_MISMATCH row) means
-# that sample's ATAC BAM needs separate follow-up -- check its Cell
-# Ranger ARC reference package/version against the others before trusting
-# its multiome data downstream.
+# all matched BAMs at once, so a problem with any single comparison (e.g.
+# a real genotype mismatch/sample swap, or a task-level error) only fails
+# that one task instead of the whole cohort.
+#
+# SECOND_INPUT points at the reordered subset BAM
+# (crosscheck/atac_subset/<wgs_sample>.subset.reordered.bam), not the raw
+# atac_possorted_bam.bam -- the raw ATAC BAMs list contigs in a different
+# order than the WGS VCF/haplotype map (same contigs, alphabetical vs.
+# numeric), which fails CrosscheckFingerprints's strict sequence-
+# dictionary check for every sample. See subset_reorder_atac_bams.sh for
+# the fix (subset to fingerprinting sites, then reorder to match).
 #
 # NOTE: --array bounds above must match `wc -l crosscheck_atac_bams.txt`
 # -- update both if the crosswalk is regenerated with a different sample
@@ -48,9 +47,11 @@ mkdir -p crosscheck
 
 wgs_sample=$(sed -n "${SLURM_ARRAY_TASK_ID}p" crosscheck_sample_map.txt | cut -f1)
 bam=$(sed -n "${SLURM_ARRAY_TASK_ID}p" crosscheck_atac_bams.txt)
+reordered_bam="crosscheck/atac_subset/${wgs_sample}.subset.reordered.bam"
 
 echo "${wgs_sample}"
 echo "${bam}"
+echo "${reordered_bam}"
 
 # INPUT_SAMPLE_MAP renames each WGS VCF sample (e.g. JSB100-1) to the
 # scATAC sample name recorded in the matching BAM's RG SM tag (e.g.
@@ -67,7 +68,7 @@ echo "${bam}"
 # fails the task loudly.
 gatk CrosscheckFingerprints \
   --INPUT "${VCF}" \
-  --SECOND_INPUT "${bam}" \
+  --SECOND_INPUT "${reordered_bam}" \
   --INPUT_SAMPLE_MAP crosscheck_sample_map.txt \
   --HAPLOTYPE_MAP "${HAPLOTYPE_MAP}" \
   --CROSSCHECK_MODE CHECK_SAME_SAMPLE \

@@ -27,4 +27,6 @@ VariantRecalibrator with indels
 Apply indel VQSR model
 Filter, normalize, and split multi-allelic sites
 Build WGS<->scATAC crosswalk with make_crosscheck_params.sh
+Build haplotype-map SNP site BED with make_haplotype_sites_bed.sh
+Subset & reorder ATAC BAMs to WGS reference contig order (subset_reorder_atac_bams.sh)
 Verify donor identity with GATK CrosscheckFingerprints
