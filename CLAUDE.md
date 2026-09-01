@@ -253,7 +253,14 @@ Each step below: script → what it does → inputs → outputs. Order matches
     its BAM down to just the reads overlapping `haplotype_sites.bed` (fast
     via the existing `.bai` index — `CrosscheckFingerprints` never looks
     at anything else anyway), *then* reorders that small subset with
-    `ReorderSam -SD <WGS .dict>`.
+    `ReorderSam -SD <WGS .dict>`. Also passes
+    `--ALLOW_INCOMPLETE_DICT_CONCORDANCE true`: the subset BAM still
+    inherits its full original header, including ALT/unplaced-scaffold
+    contigs (e.g. `KI270728.1`) that Broad's `.dict` doesn't declare the
+    same way — `ReorderSam` validates *every* header contig against the
+    target dictionary regardless of whether any reads actually use it, so
+    without this flag it refuses outright on the first unmatched one, even
+    though the `-L` subsetting already means no such reads are present.
     In: `haplotype_sites.bed`, `crosscheck_sample_map.txt`,
     `crosscheck_atac_bams.txt`,
     `/projects/p31535/boles/Homo_sapiens_assembly38.dict` (built by

@@ -65,10 +65,21 @@ samtools view -@ 4 -b -L "${SITES_BED}" -o "${subset_bam}" "${bam}"
 
 echo "Reordering contigs to match the WGS reference dictionary"
 
+# ALLOW_INCOMPLETE_DICT_CONCORDANCE: the subset BAM still inherits its
+# full original header from the ATAC BAM, including ALT/unplaced-scaffold
+# contigs (e.g. KI270728.1) that ReorderSam validates against the new
+# dictionary regardless of whether any actual reads use them. Broad's
+# Homo_sapiens_assembly38.dict doesn't declare the same ALT/decoy contig
+# set as Cell Ranger ARC's reference, so without this flag ReorderSam
+# refuses outright on the first unmatched contig it finds -- even though
+# the -L subsetting above already restricted the data itself to
+# haplotype-map sites on primary chromosomes only, so no reads on those
+# contigs are actually present to drop.
 gatk ReorderSam \
   -I "${subset_bam}" \
   -O "${reordered_bam}" \
-  -SD "${WGS_DICT}"
+  -SD "${WGS_DICT}" \
+  --ALLOW_INCOMPLETE_DICT_CONCORDANCE true
 
 echo "Indexing reordered subset BAM"
 
