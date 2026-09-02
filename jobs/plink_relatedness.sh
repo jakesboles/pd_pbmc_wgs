@@ -42,7 +42,21 @@
 # keeps effectively-unique (if imprecise) IDs for that rare tail.
 #
 # QC filters below (--maf 0.05 --geno 0.05 --mind 0.1) are standard
-# defaults. Deliberately NOT applying --hwe here: Hardy-Weinberg
+# defaults, but run as two SEPARATE, ORDERED plink2 calls -- --geno
+# (drop poorly-genotyped variants) strictly before --mind (drop
+# poorly-genotyped samples), not combined into one call. This isn't
+# cosmetic: PLINK2 computes per-sample missingness against whatever
+# variant set is currently loaded, so if --mind runs before --geno has
+# removed the worst sites, a relatively small number of bad/low-
+# confidence variants (routine in a ~24M-variant joint-genotyped
+# multi-sample VCF, where any given sample can easily lack a confident
+# call at a site private to other samples) drags every sample's apparent
+# missingness rate up -- this is exactly what happened on the first
+# attempt here, with --mind computed against the full unfiltered variant
+# set and removing all 121 samples. Filtering variants first, then
+# computing --mind against that cleaned-up set, is standard practice in
+# published GWAS QC protocols for this reason -- these two steps are not
+# commutative. Deliberately NOT applying --hwe here: Hardy-Weinberg
 # deviation is expected at real sites when a cohort contains related
 # individuals -- exactly what this step exists to detect -- so filtering
 # on it first would be circular; save --hwe for later analyses that
@@ -82,21 +96,29 @@ plink2 \
   --make-pgen \
   --out "${OUT_DIR}/cohort_raw"
 
-echo "Applying variant/sample QC filters"
+echo "Filtering low-quality/rare variants (--maf, --geno)"
 
 plink2 \
   --threads 8 \
   --pfile "${OUT_DIR}/cohort_raw" \
   --maf 0.05 \
   --geno 0.05 \
+  --make-pgen \
+  --out "${OUT_DIR}/cohort_geno"
+
+echo "Filtering poorly-genotyped samples (--mind)"
+
+plink2 \
+  --threads 8 \
+  --pfile "${OUT_DIR}/cohort_geno" \
   --mind 0.1 \
   --make-pgen \
   --out "${OUT_DIR}/cohort_qc"
 
-# --maf/--geno only ever drop variants, never samples, so any drop in
-# sample count between cohort_raw and cohort_qc is attributable to
-# --mind. .psam files have one header line (starting with '#') followed
-# by one row per sample.
+# --maf/--geno above only ever drop variants, never samples, so the drop
+# in sample count between cohort_raw and cohort_qc is attributable
+# entirely to --mind. .psam files have one header line (starting with
+# '#') followed by one row per sample.
 n_before=$(grep -vc '^#' "${OUT_DIR}/cohort_raw.psam")
 n_after=$(grep -vc '^#' "${OUT_DIR}/cohort_qc.psam")
 echo "--mind 0.1 removed $((n_before - n_after)) of ${n_before} samples (${n_after} remain)"
