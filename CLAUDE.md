@@ -377,8 +377,8 @@ Each step below: script → what it does → inputs → outputs. Order matches
     documented projection recipe
     (https://www.cog-genomics.org/plink/2.0/score#pca_project): compute
     PCA + allele frequencies on the reference panel alone
-    (`--pca biallelic-var-wts --freq` — no explicit PC count, since this
-    old PLINK2 build rejects a count alongside a modifier and 10 is its
+    (`--pca var-wts --freq` — no explicit PC count, since this old
+    PLINK2 build rejects a count alongside a modifier and 10 is its
     default anyway), then project the cohort onto
     those loadings with `--score` using the reference's own allele
     frequencies (`--read-freq`) rather than the cohort's. This sidesteps
@@ -500,16 +500,24 @@ subjects are unrelated. `r_scripts/relatedness_viz.R` plots `KINSHIP` vs
 
 **`jobs/ancestry_pca.sh`** (step 26) — estimates ancestry per sample by
 projecting the cohort onto a 1000 Genomes PCA, for use as a QTL-mapping
-covariate. Not yet run. Before running: confirm the reference panel
-filename prefix at `/projects/p31535/boles/plink_references/` actually
-matches `REF_PFILE` in the script (assumed `all_hg38`), and treat the
-whole script with a bit of extra scrutiny on the first run — the
-`--score` column-number assumptions (`ID` col 2, `A1` col 6, PCs starting
-col 7) come from PLINK2's own documented recipe, but the script also
-echoes `ref_pca.eigenvec.allele`'s header before using it, specifically
-so that assumption is easy to double check against the log on this
-particular (old, 2019-built) PLINK2 installation before trusting the
-output.
+covariate. The reference panel filename prefix at
+`/projects/p31535/boles/plink_references/` has been confirmed to match
+`REF_PFILE` in the script (`all_hg38`), and the pipeline runs cleanly
+through ID harmonization, `--allow-extra-chr`, the SNP-set intersection,
+and LD-pruning. The `--pca` call needed two rounds of fixing against this
+cluster's unusually old (24 Jul 2019) PLINK2 build, whose syntax and
+output diverge from current PLINK2 web docs: no numeric PC count
+alongside a modifier, the modifier itself is `var-wts` (not
+`biallelic-var-wts`, which doesn't exist in this build), and it writes
+`.eigenvec.var` (not `.eigenvec.allele`) with columns confirmed directly
+from this build's own `plink2 --help pca` output — `ID` col 2, `MAJ` col
+3 (used as the `--score` allele column, since `--help pca` confirms PC
+signs are computed relative to the major allele), PCs in cols 5-14. The
+`--score` call's own modifier keywords (`header-read`,
+`no-mean-imputation`, `variance-standardize`) are still unconfirmed
+against this build — worth checking `plink2 --help score` before trusting
+that step, given `--pca`'s syntax here already diverged twice from
+current docs.
 
 Once ancestry and relatedness are both reviewed, the actual QTL mapping
 work (integrating `vqsr/cohort.pass.normalized.vcf.gz` genotypes with the

@@ -53,15 +53,20 @@
 # calls anything but chr1-22/chrX (see params/chromosomes.txt) and so
 # shouldn't ever hit this.
 #
-# --pca is called as `--pca biallelic-var-wts`, with no explicit PC
-# count: this exact-old (2019) PLINK2 build rejects `--pca 10
-# biallelic-var-wts` outright ("Invalid --pca parameter sequence"),
-# apparently not accepting a count alongside a modifier the way current
-# PLINK2 docs show. Omitting the count relies on PLINK2's own default of
-# 10 PCs -- matches what --score-col-nums 7-16 below assumes -- and
-# matches the exact syntax in PLINK2's own documented example
-# (https://www.cog-genomics.org/plink/2.0/score#pca_project) rather than
-# guessing at this build's specific accepted argument grammar.
+# --pca is called as `--pca var-wts`, confirmed against this exact
+# build's own `plink2 --help pca` output rather than current PLINK2 web
+# docs, which describe syntax this 2019-era build doesn't have:
+# `biallelic-var-wts` doesn't exist here (plain `var-wts` is the only
+# variant-weights modifier), the modifier must come immediately after
+# `--pca` with any count afterward (not `--pca 10 var-wts`), and it
+# writes a `.eigenvec.var` file -- not `.eigenvec.allele` as current docs
+# would suggest. No explicit count is passed since 10 is the default
+# (matches what --score-col-nums below assumes). Default `vcols` output
+# is `chrom,maj,nonmaj`, with ID always inserted right after chrom and
+# the 10 PCs always inserted at the end, giving column layout CHROM(1)
+# ID(2) MAJ(3) NONMAJ(4) PC1-PC10(5-14) -- MAJ (column 3) is exactly the
+# allele column --score needs, since --help pca confirms PC signs are
+# computed "w.r.t. the major, not necessarily reference, allele".
 
 set -euo pipefail
 
@@ -158,11 +163,11 @@ plink2 \
   --pfile "${OUT_DIR}/ref_shared" \
   --extract "${OUT_DIR}/ref_pruned.prune.in" \
   --freq \
-  --pca biallelic-var-wts \
+  --pca var-wts \
   --out "${OUT_DIR}/ref_pca"
 
-echo "ref_pca.eigenvec.allele header (sanity check: ID should be column 2, A1 column 6, PC1 column 7):"
-head -1 "${OUT_DIR}/ref_pca.eigenvec.allele"
+echo "ref_pca.eigenvec.var header (sanity check: ID should be column 2, MAJ column 3, PC1 column 5):"
+head -1 "${OUT_DIR}/ref_pca.eigenvec.var"
 
 echo "Projecting cohort samples onto the reference PCA"
 
@@ -171,13 +176,21 @@ echo "Projecting cohort samples onto the reference PCA"
 # standardize against the same population the PCA space was built from,
 # not re-derive frequencies from the (much smaller, non-representative)
 # cohort being projected.
+#
+# File/column numbers below (ref_pca.eigenvec.var, ID=2, MAJ=3,
+# PCs=5-14) are confirmed from this build's own `--pca` help text (see
+# comment above the PCA call). The --score modifier keywords themselves
+# (header-read, no-mean-imputation, variance-standardize) are NOT yet
+# confirmed against this build -- check `plink2 --help score` before
+# relying on this call, given --pca's syntax here has already twice
+# diverged from current PLINK2 docs.
 plink2 \
   --threads 8 \
   --pfile "${OUT_DIR}/cohort_shared" \
   --extract "${OUT_DIR}/ref_pruned.prune.in" \
   --read-freq "${OUT_DIR}/ref_pca.afreq" \
-  --score "${OUT_DIR}/ref_pca.eigenvec.allele" 2 6 header-read no-mean-imputation variance-standardize \
-  --score-col-nums 7-16 \
+  --score "${OUT_DIR}/ref_pca.eigenvec.var" 2 3 header-read no-mean-imputation variance-standardize \
+  --score-col-nums 5-14 \
   --out "${OUT_DIR}/cohort_projected_pca"
 
 echo "Done"
