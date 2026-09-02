@@ -179,11 +179,12 @@ echo "Projecting cohort samples onto the reference PCA"
 #
 # File/column numbers below (ref_pca.eigenvec.var, ID=2, MAJ=3,
 # PCs=5-14) are confirmed from this build's own `--pca` help text (see
-# comment above the PCA call). The --score modifier keywords themselves
-# (header-read, no-mean-imputation, variance-standardize) are NOT yet
-# confirmed against this build -- check `plink2 --help score` before
-# relying on this call, given --pca's syntax here has already twice
-# diverged from current PLINK2 docs.
+# comment above the PCA call). --score's own modifier keywords (header-
+# read, no-mean-imputation, variance-standardize) are also confirmed
+# against this build's `plink2 --help score` output -- unlike --pca,
+# these are spelled/behave exactly as current PLINK2 docs describe, and
+# --score-col-nums overriding the single-column default (k) is
+# explicitly documented as supported.
 plink2 \
   --threads 8 \
   --pfile "${OUT_DIR}/cohort_shared" \

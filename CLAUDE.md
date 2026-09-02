@@ -514,10 +514,11 @@ from this build's own `plink2 --help pca` output — `ID` col 2, `MAJ` col
 3 (used as the `--score` allele column, since `--help pca` confirms PC
 signs are computed relative to the major allele), PCs in cols 5-14. The
 `--score` call's own modifier keywords (`header-read`,
-`no-mean-imputation`, `variance-standardize`) are still unconfirmed
-against this build — worth checking `plink2 --help score` before trusting
-that step, given `--pca`'s syntax here already diverged twice from
-current docs.
+`no-mean-imputation`, `variance-standardize`) were also checked against
+this build's `plink2 --help score` output and, unlike `--pca`, are
+spelled/behave exactly as current PLINK2 docs describe — no changes
+needed there. This step hasn't been run to completion yet; that's the
+next thing to confirm.
 
 Once ancestry and relatedness are both reviewed, the actual QTL mapping
 work (integrating `vqsr/cohort.pass.normalized.vcf.gz` genotypes with the
