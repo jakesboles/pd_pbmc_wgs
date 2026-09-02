@@ -331,9 +331,20 @@ Each step below: script → what it does → inputs → outputs. Order matches
     population stratification, unlike classic IBD/PI_HAT. No
     `--king-table-filter` is set, so the output covers every pairwise
     comparison (~7260 for 121 samples), not just flagged/related ones.
+    `--geno` and `--mind` run as two separate, ordered `plink2` calls
+    (variants filtered first, then samples) rather than combined into
+    one — PLINK2 computes per-sample missingness against whatever variant
+    set is currently loaded, so running `--mind` before `--geno` has
+    dropped the worst sites let a routine amount of joint-genotyping
+    missingness (any sample can lack a confident call at a site private
+    to other samples) drag every sample's apparent missingness rate
+    over 10%, removing all 121 samples on the first attempt. Filtering
+    variants before samples is standard published GWAS QC practice for
+    exactly this reason — the two steps aren't commutative.
     In: `vqsr/cohort.pass.normalized.vcf.gz`.
-    Out: `relatedness/cohort_raw.*`, `relatedness/cohort_qc.*` (PLINK2
-    filesets), `relatedness/cohort_pruned.prune.in`/`.prune.out`,
+    Out: `relatedness/cohort_raw.*`, `relatedness/cohort_geno.*`,
+    `relatedness/cohort_qc.*` (PLINK2 filesets),
+    `relatedness/cohort_pruned.prune.in`/`.prune.out`,
     `relatedness/cohort_king.kin0` — the pairwise kinship table to
     review: KING-scale kinship coefficients (~0.5 duplicate/MZ twin,
     ~0.25 1st-degree, ~0.125 2nd-degree, ~0.0625 3rd-degree, halving each
