@@ -29,6 +29,18 @@
 # just flagged/related ones -- useful here since we also want to confirm
 # the bulk of pairs cluster near 0, not just spot-check the outliers.
 #
+# --new-id-max-allele-len 1000 truncate: --set-all-var-ids errors out by
+# default on any variant whose REF/ALT allele is longer than its (small)
+# built-in cap, which real structural indels in a 121-genome cohort will
+# exceed -- 1000 is generous headroom so essentially nothing hits it in
+# practice. "truncate" (not the "missing" mode PLINK2 suggests in its own
+# error message) is used deliberately: "missing" sets every over-length
+# variant's ID to the literal '.', and since --extract later depends on
+# these IDs being unique to select specific pruned-in variants, hundreds
+# of otherwise-unrelated variants silently sharing one ID would make that
+# selection ambiguous. Truncating the allele string in the ID instead
+# keeps effectively-unique (if imprecise) IDs for that rare tail.
+#
 # QC filters below (--maf 0.05 --geno 0.05 --mind 0.1) are standard
 # defaults. Deliberately NOT applying --hwe here: Hardy-Weinberg
 # deviation is expected at real sites when a cohort contains related
@@ -65,6 +77,7 @@ plink2 \
   --double-id \
   --max-alleles 2 \
   --set-all-var-ids '@:#:$r:$a' \
+  --new-id-max-allele-len 1000 truncate \
   --autosome \
   --make-pgen \
   --out "${OUT_DIR}/cohort_raw"
