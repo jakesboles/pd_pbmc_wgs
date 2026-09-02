@@ -80,6 +80,14 @@ plink2 \
   --make-pgen \
   --out "${OUT_DIR}/cohort_qc"
 
+# --maf/--geno only ever drop variants, never samples, so any drop in
+# sample count between cohort_raw and cohort_qc is attributable to
+# --mind. .psam files have one header line (starting with '#') followed
+# by one row per sample.
+n_before=$(grep -vc '^#' "${OUT_DIR}/cohort_raw.psam")
+n_after=$(grep -vc '^#' "${OUT_DIR}/cohort_qc.psam")
+echo "--mind 0.1 removed $((n_before - n_after)) of ${n_before} samples (${n_after} remain)"
+
 echo "LD-pruning to an approximately independent marker set"
 
 plink2 \
