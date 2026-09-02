@@ -31,11 +31,17 @@ data, BAMs, VCFs, and other large outputs are never committed (see
   - `hapmap_3.3.hg38.vcf.gz`, `1000G_omni2.5.hg38.vcf.gz`,
     `1000G_phase1.snps.high_confidence.hg38.vcf.gz` (VQSR training/truth
     resources)
+  - `plink_references/` — the 1000 Genomes Phase 3 (hg38) PLINK2
+    reference panel (genotyped, not sites-only, with population labels),
+    used by `ancestry_pca.sh` for ancestry inference. Downloaded manually
+    from PLINK2's own resources page, not scripted in this repo.
 - Key module/tool versions: `fastqc/0.12.0`, `cutadapt/4.2`, `bwa-mem2
   2.2.1` (built locally at `/projects/p31535/boles/bwa-mem2-2.2.1_x64-linux`,
   not a module), `samtools/1.16.1-gcc-10.4.0`, `gatk/4.4.0.0`,
-  `bowtie2/2.5.4`, `R/4.4.0`. The VQSR scripts hardcode a Java 17 binary
-  path rather than trusting the `gatk` module's bundled JRE.
+  `bowtie2/2.5.4`, `R/4.4.0`, `plink/2.001` (self-reports internally as
+  build "24 Jul 2019" — notably predates some newer PLINK2 features like
+  `--pmerge`; see `ancestry_pca.sh`). The VQSR scripts hardcode a Java 17
+  binary path rather than trusting the `gatk` module's bundled JRE.
 
 ## Sample/lane bookkeeping
 
@@ -353,6 +359,46 @@ Each step below: script → what it does → inputs → outputs. Order matches
     any unexpectedly elevated pair is worth following up before assuming
     cohort subjects are all unrelated.
 
+26. **`jobs/ancestry_pca.sh`** — estimates genetic ancestry per sample,
+    for use as a QTL-mapping covariate, by projecting the cohort onto a
+    PCA computed from the 1000 Genomes Phase 3 (hg38) reference panel.
+    Deliberately does **not** merge the cohort into the reference with
+    `--pmerge` (the intuitive approach, and what an early draft of this
+    script attempted): `--pmerge` was still under active development as
+    of 2022, while the `plink/2.001` module here self-reports internally
+    as a build from **24 Jul 2019** — confirmed from an earlier job's own
+    log output — solidly predating `--pmerge`. Instead follows PLINK2's
+    documented projection recipe
+    (https://www.cog-genomics.org/plink/2.0/score#pca_project): compute
+    PCA + allele frequencies on the reference panel alone
+    (`--pca 10 biallelic-var-wts --freq`), then project the cohort onto
+    those loadings with `--score` using the reference's own allele
+    frequencies (`--read-freq`) rather than the cohort's. This sidesteps
+    `--pmerge` entirely and avoids reconciling REF/ALT allele coding and
+    strand orientation across a full dataset merge — also generally
+    considered the more statistically rigorous approach for this kind of
+    reference-panel ancestry inference. Both cohort and reference are
+    first re-IDed to a shared `chrom:pos:ref:alt` scheme and restricted
+    to biallelic SNPs (`--snps-only just-acgt`) before intersecting —
+    `--extract` only accepts a plain ID list, not a `.pvar` table, so
+    each side's SNP list is written out explicitly and the *reference's*
+    resulting list (not the cohort's original one) is what gets
+    extracted from the cohort, so both sides end up with the exact same
+    shared set. Pruning before PCA uses a wider window
+    (`--indep-pairwise 1000 100 0.1`) than `plink_relatedness.sh`'s
+    kinship pruning (`200 50 0.1`) — deliberate, since PCA is far more
+    sensitive to residual LD than KING-robust kinship is.
+    In: `relatedness/cohort_qc.*` (step 25), the 1000 Genomes reference
+    panel at `/projects/p31535/boles/plink_references/` (confirm the
+    exact filename prefix before running — assumed to be `all_hg38`,
+    matching PLINK2's standard resource naming).
+    Out: `ancestry/ref_pca.eigenvec` (reference samples' own PC
+    coordinates — join with the panel's `.psam` `SuperPop`/`Population`
+    columns for known-ancestry labels), `ancestry/cohort_projected_pca.sscore`
+    (this cohort's samples projected into that same PC space) — plot PC1
+    vs PC2 (or beyond) from both together to see where each WGS sample
+    falls relative to labeled reference populations.
+
 ### Removed: legacy bowtie2 path
 
 `jobs/bowtie2_build.sh`, `jobs/bowtie2.sh`, and the dev/test
@@ -428,16 +474,30 @@ fingerprinting.
 
 ## Next step
 
-**`jobs/plink_relatedness.sh`** (step 25 above) — a different QC axis
-from the crosscheck above: cryptic relatedness *between WGS subjects
-themselves* (e.g. an unreported family relationship or a duplicate
-enrollment), rather than identity between the WGS and scATAC datasets.
-Not yet run. Review `relatedness/cohort_king.kin0` once it has: most
+**`jobs/plink_relatedness.sh`** (step 25) has been debugged to a working
+state (two real bugs found and fixed along the way: an allele-length
+overflow in `--set-all-var-ids`, and a `--geno`/`--mind` filter-ordering
+issue that was removing every sample — see the script's own comments and
+git history for both). Review `relatedness/cohort_king.kin0`: most
 pairwise kinship coefficients should cluster near 0, and any
 unexpectedly elevated pair (see the kinship-scale cutoffs in step 25's
 description) is worth following up on before assuming all cohort
-subjects are unrelated.
+subjects are unrelated. `r_scripts/relatedness_viz.R` plots `KINSHIP` vs
+`IBS0` from this output.
 
-Once that's done, the actual QTL mapping work (integrating
-`vqsr/cohort.pass.normalized.vcf.gz` genotypes with the multiome
-scRNA/scATAC data) has no scripts in this repo yet.
+**`jobs/ancestry_pca.sh`** (step 26) — estimates ancestry per sample by
+projecting the cohort onto a 1000 Genomes PCA, for use as a QTL-mapping
+covariate. Not yet run. Before running: confirm the reference panel
+filename prefix at `/projects/p31535/boles/plink_references/` actually
+matches `REF_PFILE` in the script (assumed `all_hg38`), and treat the
+whole script with a bit of extra scrutiny on the first run — the
+`--score` column-number assumptions (`ID` col 2, `A1` col 6, PCs starting
+col 7) come from PLINK2's own documented recipe, but the script also
+echoes `ref_pca.eigenvec.allele`'s header before using it, specifically
+so that assumption is easy to double check against the log on this
+particular (old, 2019-built) PLINK2 installation before trusting the
+output.
+
+Once ancestry and relatedness are both reviewed, the actual QTL mapping
+work (integrating `vqsr/cohort.pass.normalized.vcf.gz` genotypes with the
+multiome scRNA/scATAC data) has no scripts in this repo yet.

@@ -31,3 +31,4 @@ Build haplotype-map SNP site BED with make_haplotype_sites_bed.sh
 Subset & reorder ATAC BAMs to WGS reference contig order (subset_reorder_atac_bams.sh)
 Verify donor identity with GATK CrosscheckFingerprints
 Estimate pairwise relatedness with PLINK2 KING-robust kinship (plink_relatedness.sh)
+Estimate genetic ancestry via 1000 Genomes PCA projection (ancestry_pca.sh)
