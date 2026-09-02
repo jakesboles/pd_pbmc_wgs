@@ -10,10 +10,10 @@ cd /projects/b1169/boles/pd_pbmc_wgs
 
 module load samtools/1.16.1-gcc-10.4.0
 
-OUT="crosscheck_bam_dict_signatures.txt"
+OUT="params/crosscheck_bam_dict_signatures.txt"
 > "$OUT"
 
-paste crosscheck_sample_map.txt crosscheck_atac_bams.txt | while IFS=$'\t' read -r wgs_sample atac_sample bam; do
+paste params/crosscheck_sample_map.txt params/crosscheck_atac_bams.txt | while IFS=$'\t' read -r wgs_sample atac_sample bam; do
   sig=$(samtools view -H "$bam" \
     | awk -F'\t' '/^@SQ/ { for (i = 1; i <= NF; i++) if ($i ~ /^SN:/) print $i }' \
     | md5sum | cut -d' ' -f1)

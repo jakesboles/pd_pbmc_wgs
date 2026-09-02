@@ -14,7 +14,7 @@ cd /projects/b1169/boles/pd_pbmc_wgs
 
 module load samtools/1.16.1-gcc-10.4.0
 
-PARAMS_FILE="bwa_params.txt"
+PARAMS_FILE="params/bwa_params.txt"
 
 R1=$(sed -n "${SLURM_ARRAY_TASK_ID}p" $PARAMS_FILE | cut -f1 -d,)
 R2=$(sed -n "${SLURM_ARRAY_TASK_ID}p" $PARAMS_FILE | cut -f2 -d,)

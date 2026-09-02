@@ -14,7 +14,7 @@ module load gatk/4.4.0.0
 
 cd /projects/b1169/boles/pd_pbmc_wgs
 
-SAMPLE=$(sed -n "${SLURM_ARRAY_TASK_ID}p" "bowtie_params_id.txt")
+SAMPLE=$(sed -n "${SLURM_ARRAY_TASK_ID}p" "params/bowtie_params_id.txt")
 BAM="bwa_bam/${SAMPLE}.bqsr.bam"
 
 gatk --java-options "-Xmx4g" HaplotypeCaller  \

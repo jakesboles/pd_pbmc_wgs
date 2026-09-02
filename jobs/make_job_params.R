@@ -2,6 +2,8 @@ library(tidyverse)
 
 setwd("/projects/b1169/boles/pd_pbmc_wgs")
 
+dir.create("params", showWarnings = FALSE)
+
 files <- list.files("fastq")
 
 # bowtie2 params -----------------------------------------------------------
@@ -22,23 +24,23 @@ for (i in seq_along(ids)){
                      collapse = ",")
 }
 
-mat[, 1] %>% 
-  as_tibble() %>% 
-  write.table("bowtie_params_id.txt",
+mat[, 1] %>%
+  as_tibble() %>%
+  write.table("params/bowtie_params_id.txt",
               quote = F,
               row.names = F,
               col.names = F,
               sep = "|")
-mat[, 2] %>% 
-  as_tibble() %>% 
-  write.table("bowtie_params_r1.txt",
+mat[, 2] %>%
+  as_tibble() %>%
+  write.table("params/bowtie_params_r1.txt",
               quote = F,
               row.names = F,
               col.names = F,
               sep = "|")
-mat[, 3] %>% 
-  as_tibble() %>% 
-  write.table("bowtie_params_r2.txt",
+mat[, 3] %>%
+  as_tibble() %>%
+  write.table("params/bowtie_params_r2.txt",
               quote = F,
               row.names = F,
               col.names = F,
@@ -63,8 +65,8 @@ for (i in seq_along(reps)) {
 }
 
 mat %>%
-  as_tibble() %>% 
-  write.table(file = "cutadapt_params.txt",
+  as_tibble() %>%
+  write.table(file = "params/cutadapt_params.txt",
               quote = F,
               row.names = F,
               col.names = F,
@@ -72,10 +74,10 @@ mat %>%
 
 # BWA params --------------------------------------------------------------
 
-as.data.frame(mat) %>% 
+as.data.frame(mat) %>%
   mutate(lane = str_split_i(V3, "_", i = 3),
          sample = str_split_i(V3, "_", i = 1)) %>%
-  write.table(file = "bwa_params.txt",
+  write.table(file = "params/bwa_params.txt",
               quote = F,
               row.names = F,
               col.names = F,

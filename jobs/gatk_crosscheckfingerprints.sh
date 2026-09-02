@@ -12,10 +12,11 @@
 
 # Verifies donor identity between the filtered WGS cohort VCF and each
 # matched scATAC-seq (Cell Ranger ARC) possorted BAM, using GATK's
-# haplotype-map-based fingerprinting. Requires crosscheck_sample_map.txt
-# and crosscheck_atac_bams.txt from make_crosscheck_params.sh, AND the
-# reordered subset BAMs from subset_reorder_atac_bams.sh, to already
-# exist -- with matching row order/count (one array task per line/pair).
+# haplotype-map-based fingerprinting. Requires
+# params/crosscheck_sample_map.txt and params/crosscheck_atac_bams.txt
+# from make_crosscheck_params.sh, AND the reordered subset BAMs from
+# subset_reorder_atac_bams.sh, to already exist -- with matching row
+# order/count (one array task per line/pair).
 #
 # One task per sample pair, rather than one job comparing the VCF against
 # all matched BAMs at once, so a problem with any single comparison (e.g.
@@ -39,7 +40,7 @@
 # each task's log in noise. Subsetting INPUT down to just this task's one
 # sample first avoids that.
 #
-# NOTE: --array bounds above must match `wc -l crosscheck_atac_bams.txt`
+# NOTE: --array bounds above must match `wc -l params/crosscheck_atac_bams.txt`
 # -- update both if the crosswalk is regenerated with a different sample
 # count.
 
@@ -52,12 +53,12 @@ module load gatk/4.4.0.0
 REFERENCE="/projects/p31535/boles/Homo_sapiens_assembly38.fasta"
 HAPLOTYPE_MAP="/projects/p31535/boles/Homo_sapiens_assembly38.haplotype_database.txt"
 VCF="vqsr/cohort.pass.normalized.vcf.gz"
-SITES_BED="haplotype_sites.bed"
+SITES_BED="params/haplotype_sites.bed"
 
 mkdir -p crosscheck crosscheck/vcf_subset
 
-wgs_sample=$(sed -n "${SLURM_ARRAY_TASK_ID}p" crosscheck_sample_map.txt | cut -f1)
-bam=$(sed -n "${SLURM_ARRAY_TASK_ID}p" crosscheck_atac_bams.txt)
+wgs_sample=$(sed -n "${SLURM_ARRAY_TASK_ID}p" params/crosscheck_sample_map.txt | cut -f1)
+bam=$(sed -n "${SLURM_ARRAY_TASK_ID}p" params/crosscheck_atac_bams.txt)
 reordered_bam="crosscheck/atac_subset/${wgs_sample}.subset.reordered.bam"
 subset_vcf="crosscheck/vcf_subset/${wgs_sample}.vcf.gz"
 
@@ -90,7 +91,7 @@ gatk SelectVariants \
 gatk CrosscheckFingerprints \
   --INPUT "${subset_vcf}" \
   --SECOND_INPUT "${reordered_bam}" \
-  --INPUT_SAMPLE_MAP crosscheck_sample_map.txt \
+  --INPUT_SAMPLE_MAP params/crosscheck_sample_map.txt \
   --HAPLOTYPE_MAP "${HAPLOTYPE_MAP}" \
   --CROSSCHECK_MODE CHECK_SAME_SAMPLE \
   --CROSSCHECK_BY SAMPLE \

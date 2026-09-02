@@ -14,7 +14,7 @@ module load gatk/4.4.0.0
 
 cd /projects/b1169/boles/pd_pbmc_wgs
 
-CHROMOSOME=$(sed -n "${SLURM_ARRAY_TASK_ID}p" "chromosomes.txt")
+CHROMOSOME=$(sed -n "${SLURM_ARRAY_TASK_ID}p" "params/chromosomes.txt")
 DB="gendb://genomics_db/chr${CHROMOSOME}_db"
 
  gatk --java-options "-Xmx4g" GenotypeGVCFs \

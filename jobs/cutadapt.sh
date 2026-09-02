@@ -14,7 +14,7 @@ module load cutadapt/4.2
 
 cd /projects/b1169/boles/pd_pbmc_wgs
 
-PARAMS_FILE="cutadapt_params.txt"
+PARAMS_FILE="params/cutadapt_params.txt"
 
 R1=$(sed -n "${SLURM_ARRAY_TASK_ID}p" $PARAMS_FILE | cut -f1 -d,)
 R2=$(sed -n "${SLURM_ARRAY_TASK_ID}p" $PARAMS_FILE | cut -f2 -d,)
