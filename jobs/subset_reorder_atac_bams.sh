@@ -27,13 +27,14 @@
 # Rather than reordering each full ~15-20GB ATAC BAM (gatk ReorderSam
 # rewrites every record, so it's a full-file, full-resort operation),
 # this first subsets each BAM down to just the reads overlapping the
-# haplotype map's fingerprinting SNP sites (haplotype_sites.bed, from
-# make_haplotype_sites_bed.sh) -- CrosscheckFingerprints never looks at
-# anything else anyway -- then reorders that small subset. Requires
-# haplotype_sites.bed and crosscheck_sample_map.txt/crosscheck_atac_bams.txt
-# (one array task per line/pair) to already exist.
+# haplotype map's fingerprinting SNP sites (params/haplotype_sites.bed,
+# from make_haplotype_sites_bed.sh) -- CrosscheckFingerprints never looks
+# at anything else anyway -- then reorders that small subset. Requires
+# params/haplotype_sites.bed and
+# params/crosscheck_sample_map.txt/params/crosscheck_atac_bams.txt (one
+# array task per line/pair) to already exist.
 #
-# NOTE: --array bounds above must match `wc -l crosscheck_atac_bams.txt`
+# NOTE: --array bounds above must match `wc -l params/crosscheck_atac_bams.txt`
 # -- update both if the crosswalk is regenerated with a different sample
 # count.
 
@@ -45,13 +46,13 @@ module load samtools/1.16.1-gcc-10.4.0
 module load gatk/4.4.0.0
 
 WGS_DICT="/projects/p31535/boles/Homo_sapiens_assembly38.dict"
-SITES_BED="haplotype_sites.bed"
+SITES_BED="params/haplotype_sites.bed"
 OUT_DIR="crosscheck/atac_subset"
 
 mkdir -p "${OUT_DIR}"
 
-wgs_sample=$(sed -n "${SLURM_ARRAY_TASK_ID}p" crosscheck_sample_map.txt | cut -f1)
-bam=$(sed -n "${SLURM_ARRAY_TASK_ID}p" crosscheck_atac_bams.txt)
+wgs_sample=$(sed -n "${SLURM_ARRAY_TASK_ID}p" params/crosscheck_sample_map.txt | cut -f1)
+bam=$(sed -n "${SLURM_ARRAY_TASK_ID}p" params/crosscheck_atac_bams.txt)
 
 echo "${wgs_sample}"
 echo "${bam}"

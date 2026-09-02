@@ -14,7 +14,7 @@ module load samtools/1.16.1-gcc-10.4.0
 
 cd /projects/b1169/boles/pd_pbmc_wgs
 
-SAMPLE=$(sed -n "${SLURM_ARRAY_TASK_ID}p" "bowtie_params_id.txt")
+SAMPLE=$(sed -n "${SLURM_ARRAY_TASK_ID}p" "params/bowtie_params_id.txt")
 
 echo ${SAMPLE}
 

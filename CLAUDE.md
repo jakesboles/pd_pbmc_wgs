@@ -45,18 +45,24 @@ data, BAMs, VCFs, and other large outputs are never committed (see
 
 ## Sample/lane bookkeeping
 
+All small parameter/manifest files described below (and referenced
+throughout this doc) live under `params/` in the working directory, not
+the working directory root — moved there in a repo-wide reorganization;
+every job script that reads or writes one of them was updated to the
+`params/<file>` path accordingly.
+
 `jobs/make_job_params.R` is the hub that turns the raw `fastq/` directory
 listing into every downstream job's parameter file. It is **run manually
 (not via SLURM)** whenever the fastq directory changes, and produces:
 
 | File | Grain | Columns | Consumed by |
 |---|---|---|---|
-| `bowtie_params_id.txt` | one row per **sample** (unique ID prefix before first `_`) | sample ID only | `bwa_merge.sh`, `gatk_markduplicates.sh`, `samtools_qc.sh`, `gatk_baserecalibrator.sh`, `gatk_haplotype_caller.sh` |
-| `bowtie_params_r1.txt` / `_r2.txt` | one row per sample | comma-joined list of that sample's R1/R2 files across all lanes | unused — written for the now-removed bowtie2 path (see "Removed: legacy bowtie2 path" below) |
-| `cutadapt_params.txt` | one row per **lane-level fastq pair** | `R1_file,R2_file,replicate_id` | `cutadapt.sh` |
-| `bwa_params.txt` | one row per lane-level fastq pair | `R1_file,R2_file,replicate_id,lane,sample` | `bwa.sh` |
+| `params/bowtie_params_id.txt` | one row per **sample** (unique ID prefix before first `_`) | sample ID only | `bwa_merge.sh`, `gatk_markduplicates.sh`, `samtools_qc.sh`, `gatk_baserecalibrator.sh`, `gatk_haplotype_caller.sh` |
+| `params/bowtie_params_r1.txt` / `_r2.txt` | one row per sample | comma-joined list of that sample's R1/R2 files across all lanes | unused — written for the now-removed bowtie2 path (see "Removed: legacy bowtie2 path" below) |
+| `params/cutadapt_params.txt` | one row per **lane-level fastq pair** | `R1_file,R2_file,replicate_id` | `cutadapt.sh` |
+| `params/bwa_params.txt` | one row per lane-level fastq pair | `R1_file,R2_file,replicate_id,lane,sample` | `bwa.sh` |
 
-Despite the `bowtie_*` naming, `bowtie_params_id.txt` is the de facto
+Despite the `bowtie_*` naming, `params/bowtie_params_id.txt` is the de facto
 **master sample manifest** used throughout the bwa/GATK production path —
 this is a naming artifact from an earlier alignment approach, not a sign
 that bowtie2 is actually in use (see "Removed: legacy bowtie2 path" below).
@@ -67,11 +73,11 @@ Cohort scale as encoded in current array sizes: **1804** raw fastq files
 Unlike the large biological outputs (BAMs, VCFs — see `.gitignore`), these
 small text manifest/parameter files are committed to the repo as they're
 generated, since they're needed to reproduce or re-run any given step.
-`bwa_params.txt`, `cutadapt_params.txt`, `chromosomes.txt` (the
-chr1-22+chrX list consumed by steps 13-14), and `cohort.sample_map` (the
+`params/bwa_params.txt`, `params/cutadapt_params.txt`, `params/chromosomes.txt` (the
+chr1-22+chrX list consumed by steps 13-14), and `params/cohort.sample_map` (the
 `sample<TAB>gvcf_path` map built by step 12, see below) are all currently
-checked in this way. `bowtie_params_id.txt`/`_r1.txt`/`_r2.txt` are not
-checked in — `cohort.sample_map` now serves as the more up-to-date,
+checked in this way. `params/bowtie_params_id.txt`/`_r1.txt`/`_r2.txt` are not
+checked in — `params/cohort.sample_map` now serves as the more up-to-date,
 121-sample master list for anything that needs it going forward (e.g. the
 crosscheck-fingerprinting crosswalk below).
 
@@ -91,14 +97,14 @@ Each step below: script → what it does → inputs → outputs. Order matches
 3. **`jobs/cutadapt.sh`** — adapter/quality trimming per lane-level R1/R2
    pair. Nextera adapter (`CTGTCTCTTATACACATCT`) trimmed from both reads,
    `--nextseq-trim 20`, `--minimum-length 20`.
-   In: `cutadapt_params.txt` (array 1-902), `fastq/`.
+   In: `params/cutadapt_params.txt` (array 1-902), `fastq/`.
    Out: `trimmed_fastqs/*.fastq.gz`, per-sample log in `cutadapt_logs/`.
 
 4. **`jobs/trimmed_fastqc.sh`** — FastQC on every trimmed fastq file.
    In: `trimmed_fastqs/*.fastq.gz` (array 1-1804).
    Out: `trimmed_fastqc_reports/`.
 
-5. **`jobs/make_job_params.R`** (re-run, or reuse `bwa_params.txt` from
+5. **`jobs/make_job_params.R`** (re-run, or reuse `params/bwa_params.txt` from
    step 2) — builds the BWA-specific parameter file with per-lane sample
    and lane identifiers needed for read-group tagging.
 
@@ -108,13 +114,13 @@ Each step below: script → what it does → inputs → outputs. Order matches
    `LB=<sample>_lib1`, `PL=ILLUMINA`, `PU=<lane>`.
    Prerequisite (one-time): **`jobs/bwa_build.sh`** — `bwa-mem2 index`,
    `samtools faidx`, `gatk CreateSequenceDictionary` on the reference.
-   In: `bwa_params.txt` (array 1-902), `trimmed_fastqs/`.
+   In: `params/bwa_params.txt` (array 1-902), `trimmed_fastqs/`.
    Out: `bwa_bam/<replicate_id>.sorted.bam` (+ `.bai`) — **one BAM per
    lane**, not yet per sample.
 
 7. **`jobs/bwa_merge.sh`** — merge all lane-level BAMs belonging to one
    sample, then coordinate-sort the merged file.
-   In: `bowtie_params_id.txt` (sample list), `bwa_bam/<sample>_*.sorted.bam`.
+   In: `params/bowtie_params_id.txt` (sample list), `bwa_bam/<sample>_*.sorted.bam`.
    Out: `bwa_bam/<sample>.merged.bam`, `bwa_bam/<sample>.merged.sorted.bam`.
    *Note:* the array in this script is currently `--array=59,99` — only a
    2-sample subset, not the full 121. Confirm with the analyst whether this
@@ -155,11 +161,11 @@ Each step below: script → what it does → inputs → outputs. Order matches
     (`sample<TAB>gvcf_path`) from all per-sample GVCFs. Plain shell, run
     manually.
     In: `haplotype_caller/*.output.g.vcf.gz`.
-    Out: `cohort.sample_map`.
+    Out: `params/cohort.sample_map`.
 
 13. **`jobs/gatk_genomicsdbiimport.sh`** — combine all samples' GVCFs into
     a per-chromosome GenomicsDB workspace.
-    In: `cohort.sample_map`, `chromosomes.txt` (array 1-23; one chromosome
+    In: `params/cohort.sample_map`, `params/chromosomes.txt` (array 1-23; one chromosome
     per task — matches chr1-22 + chrX per the gather step below, so no
     chrY or chrM/MT is called anywhere in this pipeline).
     Out: `genomics_db/chr<N>_db/`.
@@ -215,17 +221,17 @@ Each step below: script → what it does → inputs → outputs. Order matches
 21. **`jobs/make_crosscheck_params.sh`** — build the WGS↔scATAC crosswalk
     that `gatk_crosscheckfingerprints.sh` needs. Plain shell, run manually
     (not a SLURM array), same role as `make_cohort_map_genomedbi.sh`.
-    Repurposes `cohort.sample_map` as the WGS sample list; for each WGS
+    Repurposes `params/cohort.sample_map` as the WGS sample list; for each WGS
     sample it strips the `JSB` prefix to get the Cell Ranger ARC output
     directory name (e.g. `JSB100-1` → `100-1`), then reads the real `SM`
     tag out of that directory's `atac_possorted_bam.bam` header (rather
     than assuming it matches the directory name).
-    In: `cohort.sample_map`,
+    In: `params/cohort.sample_map`,
     `/projects/b1042/Gate_Lab/boles/pd_pbmc_multiome/cellranger/<code>/outs/atac_possorted_bam.bam`.
-    Out: `crosscheck_sample_map.txt` (`wgs_sample<TAB>atac_sample`, only
+    Out: `params/crosscheck_sample_map.txt` (`wgs_sample<TAB>atac_sample`, only
     for samples with a matching multiome directory and a readable `SM`
-    tag), `crosscheck_atac_bams.txt` (one matched BAM path per line, same
-    order/count as the sample map), `crosscheck_missing_atac.txt` (WGS
+    tag), `params/crosscheck_atac_bams.txt` (one matched BAM path per line, same
+    order/count as the sample map), `params/crosscheck_missing_atac.txt` (WGS
     samples with no matching Cell Ranger ARC directory).
 
 22. **`jobs/make_haplotype_sites_bed.sh`** — build a BED file of the
@@ -236,7 +242,7 @@ Each step below: script → what it does → inputs → outputs. Order matches
     then tab-separated SNP rows; this just pulls `CHROMOSOME`/`POSITION`
     into 0-based BED coordinates.
     In: `/projects/p31535/boles/Homo_sapiens_assembly38.haplotype_database.txt`.
-    Out: `haplotype_sites.bed`.
+    Out: `params/haplotype_sites.bed`.
 
 23. **`jobs/subset_reorder_atac_bams.sh`** — fixes a reference-contig-order
     mismatch between the ATAC BAMs and the WGS side before
@@ -253,10 +259,10 @@ Each step below: script → what it does → inputs → outputs. Order matches
     ATAC BAMs' `@SQ` orderings (all identical to each other) and then
     comparing a representative one directly against the VCF and haplotype
     map (both numeric, differing from the BAMs). A SLURM array, one task
-    per `crosscheck_sample_map.txt`/`crosscheck_atac_bams.txt` line.
+    per `params/crosscheck_sample_map.txt`/`params/crosscheck_atac_bams.txt` line.
     Reordering each full ~15-20GB ATAC BAM via `gatk ReorderSam` would
     mean rewriting/re-sorting the entire file, so each task first subsets
-    its BAM down to just the reads overlapping `haplotype_sites.bed` (fast
+    its BAM down to just the reads overlapping `params/haplotype_sites.bed` (fast
     via the existing `.bai` index — `CrosscheckFingerprints` never looks
     at anything else anyway), *then* reorders that small subset with
     `ReorderSam -SD <WGS .dict>`. Also passes
@@ -267,8 +273,8 @@ Each step below: script → what it does → inputs → outputs. Order matches
     target dictionary regardless of whether any reads actually use it, so
     without this flag it refuses outright on the first unmatched one, even
     though the `-L` subsetting already means no such reads are present.
-    In: `haplotype_sites.bed`, `crosscheck_sample_map.txt`,
-    `crosscheck_atac_bams.txt`,
+    In: `params/haplotype_sites.bed`, `params/crosscheck_sample_map.txt`,
+    `params/crosscheck_atac_bams.txt`,
     `/projects/p31535/boles/Homo_sapiens_assembly38.dict` (built by
     `bwa_build.sh`, step 6).
     Out: `crosscheck/atac_subset/<wgs_sample>.subset.reordered.bam` (+
@@ -279,16 +285,16 @@ Each step below: script → what it does → inputs → outputs. Order matches
     cohort VCF against its matched scATAC BAM's genotype-likelihood
     signal at haplotype-map SNP sites, to confirm donor identity between
     the two datasets. A SLURM array, **one task per WGS/ATAC sample pair**
-    (array 1-121, one line of `crosscheck_sample_map.txt`/
-    `crosscheck_atac_bams.txt` per task) rather than one job comparing the
+    (array 1-121, one line of `params/crosscheck_sample_map.txt`/
+    `params/crosscheck_atac_bams.txt` per task) rather than one job comparing the
     VCF against all matched BAMs at once, so a problem with any single
     comparison only fails that one task instead of the whole cohort.
     `--SECOND_INPUT` points at the *reordered subset* BAM from step 23
     (`crosscheck/atac_subset/<wgs_sample>.subset.reordered.bam`), not the
     raw `atac_possorted_bam.bam` — see step 23 for why. Before
     fingerprinting, each task first runs `gatk SelectVariants -sn
-    <wgs_sample> -L haplotype_sites.bed` to pull just that one sample out
-    of the 121-sample cohort VCF; `--INPUT` is that per-sample subset, not
+    <wgs_sample> -L params/haplotype_sites.bed` to pull just that one
+    sample out of the 121-sample cohort VCF; `--INPUT` is that per-sample subset, not
     the full cohort VCF — passing the whole cohort VCF as `INPUT` every
     task technically still produces the correct result, but
     `CrosscheckFingerprints` (in `CHECK_SAME_SAMPLE` mode) logs an `ERROR`
@@ -303,8 +309,8 @@ Each step below: script → what it does → inputs → outputs. Order matches
     compare below the level we want), and `--EXIT_CODE_WHEN_MISMATCH 0` so
     a genotype mismatch — a real possible QC finding, e.g. a sample swap —
     doesn't get treated as a task failure.
-    In: `vqsr/cohort.pass.normalized.vcf.gz`, `haplotype_sites.bed`,
-    `crosscheck_sample_map.txt`, `crosscheck_atac_bams.txt`,
+    In: `vqsr/cohort.pass.normalized.vcf.gz`, `params/haplotype_sites.bed`,
+    `params/crosscheck_sample_map.txt`, `params/crosscheck_atac_bams.txt`,
     `crosscheck/atac_subset/<wgs_sample>.subset.reordered.bam` (step 23),
     `/projects/p31535/boles/Homo_sapiens_assembly38.haplotype_database.txt`.
     Out: `crosscheck/vcf_subset/<wgs_sample>.vcf.gz` (intermediate),
@@ -384,7 +390,12 @@ Each step below: script → what it does → inputs → outputs. Order matches
     each side's SNP list is written out explicitly and the *reference's*
     resulting list (not the cohort's original one) is what gets
     extracted from the cohort, so both sides end up with the exact same
-    shared set. Pruning before PCA uses a wider window
+    shared set. Both re-ID calls also pass `--allow-extra-chr`: the 1000G
+    panel's `.pvar` includes ALT/unplaced-scaffold contigs (e.g.
+    `chr1_KI270706v1_random`) that PLINK2 refuses to even load by
+    default, before `--autosome` gets a chance to drop them — this flag
+    only relaxes that load-time check, `--autosome` still restricts the
+    actual output the same way. Pruning before PCA uses a wider window
     (`--indep-pairwise 1000 100 0.1`) than `plink_relatedness.sh`'s
     kinship pruning (`200 50 0.1`) — deliberate, since PCA is far more
     sensitive to residual LD than KING-robust kinship is.
@@ -405,7 +416,7 @@ Each step below: script → what it does → inputs → outputs. Order matches
 `jobs/gatk_haplotype_caller_test.sh` (which read from the bowtie2 output
 directory `bam/` instead of the production `bwa_bam/*.bqsr.bam`) have been
 removed from the repo — `workflow.txt` never referenced this path, and the
-production aligner has always been `bwa-mem2` (step 6). `bowtie_params_r1.txt`/
+production aligner has always been `bwa-mem2` (step 6). `params/bowtie_params_r1.txt`/
 `_r2.txt`, which only ever fed `bowtie2.sh`, are correspondingly unused now
 (see "Sample/lane bookkeeping" above). Note `multiqc_config.yaml`'s module
 list still includes a `bowtie2` section; that's now stale and can be

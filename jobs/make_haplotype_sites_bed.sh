@@ -14,7 +14,9 @@ set -euo pipefail
 cd /projects/b1169/boles/pd_pbmc_wgs
 
 HAPLOTYPE_MAP="/projects/p31535/boles/Homo_sapiens_assembly38.haplotype_database.txt"
-OUT="haplotype_sites.bed"
+OUT="params/haplotype_sites.bed"
+
+mkdir -p params
 
 grep -v '^@' "$HAPLOTYPE_MAP" | grep -v '^#' \
   | awk 'BEGIN{OFS="\t"} {print $1, $2-1, $2}' \

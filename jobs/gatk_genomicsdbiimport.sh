@@ -14,10 +14,10 @@ module load gatk/4.4.0.0
 
 cd /projects/b1169/boles/pd_pbmc_wgs
 
-CHROMOSOME=$(sed -n "${SLURM_ARRAY_TASK_ID}p" "chromosomes.txt")
+CHROMOSOME=$(sed -n "${SLURM_ARRAY_TASK_ID}p" "params/chromosomes.txt")
 
 gatk --java-options "-Xmx32g -Xms32g" GenomicsDBImport \
-  --sample-name-map cohort.sample_map \
+  --sample-name-map params/cohort.sample_map \
   --genomicsdb-workspace-path "genomics_db/chr${CHROMOSOME}_db" \
   -L "chr${CHROMOSOME}" \
   --reader-threads 16

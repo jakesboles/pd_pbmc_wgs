@@ -41,6 +41,17 @@
 # (200 50 0.1) is deliberate, not a typo: PCA is much more sensitive to
 # residual LD than KING-robust kinship is, so PCA-oriented pruning
 # conventionally uses a wider window.
+#
+# --allow-extra-chr on both harmonization calls: the 1000G reference
+# panel's .pvar includes ALT/unplaced scaffold contigs (e.g.
+# chr1_KI270706v1_random) that PLINK2 doesn't recognize as valid
+# chromosome codes by default, so it refuses to even load the file
+# before --autosome gets a chance to drop them. --allow-extra-chr only
+# relaxes that load-time validation; --autosome still restricts the
+# actual output to chr1-22 on both sides same as before. Kept on the
+# cohort side too, defensively, even though our own WGS pipeline never
+# calls anything but chr1-22/chrX (see params/chromosomes.txt) and so
+# shouldn't ever hit this.
 
 set -euo pipefail
 
@@ -61,6 +72,7 @@ echo "Harmonizing reference panel variant IDs"
 plink2 \
   --threads 8 \
   --pfile "${REF_PFILE}" \
+  --allow-extra-chr \
   --set-all-var-ids '@:#:$r:$a' \
   --new-id-max-allele-len 20 missing \
   --autosome \
@@ -75,6 +87,7 @@ echo "Harmonizing cohort variant IDs"
 plink2 \
   --threads 8 \
   --pfile "${COHORT_PFILE}" \
+  --allow-extra-chr \
   --set-all-var-ids '@:#:$r:$a' \
   --new-id-max-allele-len 20 missing \
   --autosome \

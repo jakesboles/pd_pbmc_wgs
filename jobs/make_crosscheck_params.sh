@@ -5,9 +5,9 @@
 # role as make_cohort_map_genomedbi.sh.
 #
 # Builds the WGS <-> scATAC crosswalk that gatk_crosscheckfingerprints.sh
-# needs. Repurposes cohort.sample_map (the WGS sample list already used to
-# build the GenomicsDB) as the source of truth for which WGS samples
-# exist, and looks up each sample's matching Cell Ranger ARC output
+# needs. Repurposes params/cohort.sample_map (the WGS sample list already
+# used to build the GenomicsDB) as the source of truth for which WGS
+# samples exist, and looks up each sample's matching Cell Ranger ARC output
 # directory by stripping the "JSB" prefix (e.g. JSB100-1 -> 100-1), per
 # the multiome directory naming convention.
 #
@@ -24,9 +24,11 @@ module load samtools/1.16.1-gcc-10.4.0
 
 CELLRANGER_DIR="/projects/b1042/Gate_Lab/boles/pd_pbmc_multiome/cellranger"
 
-SAMPLE_MAP_OUT="crosscheck_sample_map.txt"
-BAM_LIST_OUT="crosscheck_atac_bams.txt"
-MISSING_OUT="crosscheck_missing_atac.txt"
+mkdir -p params
+
+SAMPLE_MAP_OUT="params/crosscheck_sample_map.txt"
+BAM_LIST_OUT="params/crosscheck_atac_bams.txt"
+MISSING_OUT="params/crosscheck_missing_atac.txt"
 
 > "$SAMPLE_MAP_OUT"
 > "$BAM_LIST_OUT"
@@ -53,7 +55,7 @@ while IFS=$'\t' read -r wgs_sample gvcf_path; do
 
   echo -e "${wgs_sample}\t${atac_sample}" >> "$SAMPLE_MAP_OUT"
   echo "${bam}" >> "$BAM_LIST_OUT"
-done < cohort.sample_map
+done < params/cohort.sample_map
 
 echo "Wrote $(wc -l < "$SAMPLE_MAP_OUT") matched WGS/ATAC sample pairs to ${SAMPLE_MAP_OUT}"
 echo "Wrote $(wc -l < "$MISSING_OUT") WGS samples with no matching Cell Ranger ARC directory to ${MISSING_OUT}"

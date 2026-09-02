@@ -15,7 +15,7 @@ cd /projects/b1169/boles/pd_pbmc_wgs
 module load samtools/1.16.1-gcc-10.4.0
 module load gatk/4.4.0.0
 
-PARAMS_FILE="bowtie_params_id.txt"
+PARAMS_FILE="params/bowtie_params_id.txt"
 
 sample=$(sed -n "${SLURM_ARRAY_TASK_ID}p" $PARAMS_FILE | cut -f1 -d,)
 
