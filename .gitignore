@@ -1,4 +1,5 @@
 vqsr/*
+ancestry/*
 bwa_bam/*
 bwa_reports/*
 crosscheck/*
