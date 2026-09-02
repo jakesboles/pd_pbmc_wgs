@@ -307,6 +307,35 @@ Each step below: script → what it does → inputs → outputs. Order matches
     `EXPECTED_MISMATCH`) to review before trusting any WGS↔multiome
     sample pairing downstream.
 
+25. **`jobs/plink_relatedness.sh`** — a *different* QC axis from steps
+    21-24: cryptic relatedness *between WGS subjects themselves*
+    (duplicate enrollments, unreported family relationships), not
+    identity between the WGS and scATAC datasets. Not a SLURM array —
+    one set of pairwise comparisons across the whole cohort at once, same
+    shape as `gatk_filter_split.sh`. Imports the cohort VCF into PLINK2
+    binary (`.pgen`) format (`--double-id`, `--set-all-var-ids` since the
+    VCF's ID column is unannotated, `--autosome`-only since chrX kinship
+    needs per-sample sex info this pipeline doesn't track), applies
+    variant/sample QC (`--maf 0.05 --geno 0.05 --mind 0.1` — deliberately
+    *no* `--hwe`, since HWE deviation is expected at real sites in a
+    cohort that may contain relatives, which is exactly what this step is
+    checking for), LD-prunes to an approximately independent marker set
+    (`--indep-pairwise 200 50 0.1`), then estimates pairwise kinship with
+    PLINK2's KING-robust estimator (`--make-king-table`) — robust to
+    population stratification, unlike classic IBD/PI_HAT. No
+    `--king-table-filter` is set, so the output covers every pairwise
+    comparison (~7260 for 121 samples), not just flagged/related ones.
+    In: `vqsr/cohort.pass.normalized.vcf.gz`.
+    Out: `relatedness/cohort_raw.*`, `relatedness/cohort_qc.*` (PLINK2
+    filesets), `relatedness/cohort_pruned.prune.in`/`.prune.out`,
+    `relatedness/cohort_king.kin0` — the pairwise kinship table to
+    review: KING-scale kinship coefficients (~0.5 duplicate/MZ twin,
+    ~0.25 1st-degree, ~0.125 2nd-degree, ~0.0625 3rd-degree, halving each
+    step out; conventional midpoint cutoffs for calling a category are
+    ~0.354/0.177/0.0884/0.0442) — most pairs should cluster near 0, and
+    any unexpectedly elevated pair is worth following up before assuming
+    cohort subjects are all unrelated.
+
 ### Removed: legacy bowtie2 path
 
 `jobs/bowtie2_build.sh`, `jobs/bowtie2.sh`, and the dev/test
@@ -351,25 +380,18 @@ fingerprinting, and eventually `outs/gex_possorted_bam.bam` and the
 `filtered_feature_bc_matrix*`/`atac_fragments.tsv.gz` outputs for the QTL
 mapping stage itself.
 
-## Next step
+## WGS↔scATAC identity crosscheck: complete
 
-`jobs/make_crosscheck_params.sh` has been run successfully — all 121 WGS
-samples matched a Cell Ranger ARC directory (`crosscheck_sample_map.txt`
-and `crosscheck_atac_bams.txt` are both populated, 121 lines each;
-`crosscheck_missing_atac.txt` came back empty and was removed).
+Steps 21-24 (`make_crosscheck_params.sh`, `make_haplotype_sites_bed.sh`,
+`subset_reorder_atac_bams.sh`, `gatk_crosscheckfingerprints.sh`) have been
+run end-to-end on the full cohort. All 121 WGS↔multiome sample pairs
+reported `RESULT=EXPECTED_MATCH` with `LOD_SCORE` well above the
+significance threshold (>>20 for every sample) — donor identity between
+the WGS and scATAC datasets is confirmed cohort-wide.
 
-Run `jobs/make_haplotype_sites_bed.sh`, then `jobs/subset_reorder_atac_bams.sh`
-(a 1-121 SLURM array), then `jobs/gatk_crosscheckfingerprints.sh` (steps
-22-24 above) and review `crosscheck/<wgs_sample>.crosscheck_metrics` for
-each sample: any `EXPECTED_MATCH` that actually comes back as a mismatch
-(or vice versa) needs review before trusting that WGS↔multiome sample
-pairing. The pipeline has been validated end-to-end on one sample
-(`JSB100-1` ↔ `100-1`, `RESULT=EXPECTED_MATCH`, `LOD_SCORE≈47.1`) — the
-remaining work is running the full 1-121 array.
-
-Background on why steps 22-23 exist: the first attempt at
-`gatk_crosscheckfingerprints.sh` (as a single non-array job comparing the
-VCF against all 121 ATAC BAMs at once) crashed with a
+Background on why steps 22-23 exist, for future reference: the first
+attempt at `gatk_crosscheckfingerprints.sh` (as a single non-array job
+comparing the VCF against all 121 ATAC BAMs at once) crashed with a
 `SequenceUtil$SequenceListsDifferException`. The initial read on that
 error was that one ATAC BAM had an odd reference build — but hashing all
 121 BAMs' `@SQ` orderings showed they're all identical to each other; the
@@ -380,13 +402,25 @@ cohort-wide, not per-sample, issue — every comparison would have failed
 the same way. Steps 22-23 fix it once for the whole cohort rather than
 per sample; the per-sample SLURM array in step 24 is still worth keeping
 even so, since it means a *real* per-sample problem (an actual genotype
-mismatch, a corrupted BAM, etc.) still only fails that one task.
+mismatch, a corrupted BAM, etc.) still only fails that one task. A
+second, cosmetic-only issue (each task's log full of ~120 harmless
+`sample X is missing from RIGHT group` errors, from passing the whole
+121-sample VCF as `--INPUT` every task) was cleaned up by having each
+task first extract just its own sample from the cohort VCF before
+fingerprinting.
 
-One thing to double check: the haplotype map path
-(`/projects/p31535/boles/Homo_sapiens_assembly38.haplotype_database.txt`)
-— already confirmed to exist and work (the VCF-fingerprinting half of the
-failed run above got this far without complaint).
+## Next step
 
-Once identity is confirmed, the actual QTL mapping work (integrating
+**`jobs/plink_relatedness.sh`** (step 25 above) — a different QC axis
+from the crosscheck above: cryptic relatedness *between WGS subjects
+themselves* (e.g. an unreported family relationship or a duplicate
+enrollment), rather than identity between the WGS and scATAC datasets.
+Not yet run. Review `relatedness/cohort_king.kin0` once it has: most
+pairwise kinship coefficients should cluster near 0, and any
+unexpectedly elevated pair (see the kinship-scale cutoffs in step 25's
+description) is worth following up on before assuming all cohort
+subjects are unrelated.
+
+Once that's done, the actual QTL mapping work (integrating
 `vqsr/cohort.pass.normalized.vcf.gz` genotypes with the multiome
 scRNA/scATAC data) has no scripts in this repo yet.

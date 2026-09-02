@@ -11,5 +11,6 @@ haplotype_caller/*
 logs/*
 multiqc_data/*
 *.html
+relatedness/*
 samtools_reports/*
 vqsr/*
