@@ -377,7 +377,9 @@ Each step below: script → what it does → inputs → outputs. Order matches
     documented projection recipe
     (https://www.cog-genomics.org/plink/2.0/score#pca_project): compute
     PCA + allele frequencies on the reference panel alone
-    (`--pca 10 biallelic-var-wts --freq`), then project the cohort onto
+    (`--pca biallelic-var-wts --freq` — no explicit PC count, since this
+    old PLINK2 build rejects a count alongside a modifier and 10 is its
+    default anyway), then project the cohort onto
     those loadings with `--score` using the reference's own allele
     frequencies (`--read-freq`) rather than the cohort's. This sidesteps
     `--pmerge` entirely and avoids reconciling REF/ALT allele coding and
