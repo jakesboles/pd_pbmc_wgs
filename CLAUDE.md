@@ -314,8 +314,14 @@ Each step below: script → what it does → inputs → outputs. Order matches
     one set of pairwise comparisons across the whole cohort at once, same
     shape as `gatk_filter_split.sh`. Imports the cohort VCF into PLINK2
     binary (`.pgen`) format (`--double-id`, `--set-all-var-ids` since the
-    VCF's ID column is unannotated, `--autosome`-only since chrX kinship
-    needs per-sample sex info this pipeline doesn't track), applies
+    VCF's ID column is unannotated — with `--new-id-max-allele-len 1000
+    truncate`, since some structural indels' allele strings exceed
+    `--set-all-var-ids`'s small built-in length cap, and the "truncate"
+    mode keeps IDs unique for the later `--extract` step, unlike the
+    "missing" mode PLINK2's own error message suggests, which would give
+    every over-length variant the same `.` ID — `--autosome`-only since
+    chrX kinship needs per-sample sex info this pipeline doesn't track),
+    applies
     variant/sample QC (`--maf 0.05 --geno 0.05 --mind 0.1` — deliberately
     *no* `--hwe`, since HWE deviation is expected at real sites in a
     cohort that may contain relatives, which is exactly what this step is
