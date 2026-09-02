@@ -128,7 +128,7 @@ echo "LD-pruning to an approximately independent marker set"
 plink2 \
   --threads 8 \
   --pfile "${OUT_DIR}/cohort_qc" \
-  --indep-pairwise 1000 100 0.1 \
+  --indep-pairwise 200 50 0.1 \
   --out "${OUT_DIR}/cohort_pruned"
 
 echo "Estimating pairwise KING-robust kinship"
