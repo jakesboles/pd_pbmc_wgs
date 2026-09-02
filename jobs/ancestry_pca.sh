@@ -52,6 +52,16 @@
 # cohort side too, defensively, even though our own WGS pipeline never
 # calls anything but chr1-22/chrX (see params/chromosomes.txt) and so
 # shouldn't ever hit this.
+#
+# --pca is called as `--pca biallelic-var-wts`, with no explicit PC
+# count: this exact-old (2019) PLINK2 build rejects `--pca 10
+# biallelic-var-wts` outright ("Invalid --pca parameter sequence"),
+# apparently not accepting a count alongside a modifier the way current
+# PLINK2 docs show. Omitting the count relies on PLINK2's own default of
+# 10 PCs -- matches what --score-col-nums 7-16 below assumes -- and
+# matches the exact syntax in PLINK2's own documented example
+# (https://www.cog-genomics.org/plink/2.0/score#pca_project) rather than
+# guessing at this build's specific accepted argument grammar.
 
 set -euo pipefail
 
@@ -148,7 +158,7 @@ plink2 \
   --pfile "${OUT_DIR}/ref_shared" \
   --extract "${OUT_DIR}/ref_pruned.prune.in" \
   --freq \
-  --pca 10 biallelic-var-wts \
+  --pca biallelic-var-wts \
   --out "${OUT_DIR}/ref_pca"
 
 echo "ref_pca.eigenvec.allele header (sanity check: ID should be column 2, A1 column 6, PC1 column 7):"
