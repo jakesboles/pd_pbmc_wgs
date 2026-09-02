@@ -390,7 +390,12 @@ Each step below: script → what it does → inputs → outputs. Order matches
     each side's SNP list is written out explicitly and the *reference's*
     resulting list (not the cohort's original one) is what gets
     extracted from the cohort, so both sides end up with the exact same
-    shared set. Pruning before PCA uses a wider window
+    shared set. Both re-ID calls also pass `--allow-extra-chr`: the 1000G
+    panel's `.pvar` includes ALT/unplaced-scaffold contigs (e.g.
+    `chr1_KI270706v1_random`) that PLINK2 refuses to even load by
+    default, before `--autosome` gets a chance to drop them — this flag
+    only relaxes that load-time check, `--autosome` still restricts the
+    actual output the same way. Pruning before PCA uses a wider window
     (`--indep-pairwise 1000 100 0.1`) than `plink_relatedness.sh`'s
     kinship pruning (`200 50 0.1`) — deliberate, since PCA is far more
     sensitive to residual LD than KING-robust kinship is.
