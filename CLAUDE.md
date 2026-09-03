@@ -412,6 +412,62 @@ Each step below: script → what it does → inputs → outputs. Order matches
     vs PC2 (or beyond) from both together to see where each WGS sample
     falls relative to labeled reference populations.
 
+27. **`jobs/genesis_pcrelate.sh`** / **`r_scripts/genesis_pcrelate.R`** —
+    a more rigorous, ancestry-aware relatedness re-analysis using
+    Bioconductor's GENESIS PC-AiR/PC-Relate pipeline, requested as a
+    follow-up to step 25's plain KING-robust kinship (which doesn't
+    account for population structure at all). Built from a workflow
+    proposed in another Claude session and pasted in for review; that
+    proposal contained real bugs, fixed here rather than implemented
+    as-is:
+    - It assumed `GENESIS::kingToMatrix()` reads plink2's
+      `--make-king-table` output directly. It does not — confirmed
+      against the GENESIS source (`UW-GAC/GENESIS`
+      `R/makeSparseMatrix.R`), which does a strict `intersect()` against
+      literal KING-software column names (`ID1`, `ID2`, `Kinship`), not
+      plink2's (`IID1`, `IID2`, `KINSHIP`). `genesis_pcrelate.R` renames
+      `relatedness/cohort_king.kin0`'s columns to what `kingToMatrix()`
+      expects before calling it, and prints the file's actual column
+      names first as a sanity check rather than assuming the rename
+      targets are right.
+    - It referenced nonexistent paths (`plink/cohort_pruned.bed/.bim/.fam`,
+      `cohort_king_1.kin0`) — this repo's relatedness step produces
+      PLINK2 `.pgen`/`.pvar`/`.psam` filesets (`relatedness/cohort_qc.*`)
+      and `relatedness/cohort_king.kin0`, with no BED/BIM/FAM export or
+      `plink/` directory anywhere upstream. `jobs/genesis_pcrelate.sh`
+      re-exports the same pruned, QC'd marker set already used for
+      `cohort_king.kin0` (`plink2 --pfile relatedness/cohort_qc --extract
+      relatedness/cohort_pruned.prune.in --make-bed`) to classic PLINK1
+      BED/BIM/FAM, since `SNPRelate::snpgdsBED2GDS()` (used to build the
+      GDS file GENESIS operates on) doesn't read `.pgen`.
+    Conceptual note, not a bug but worth stating plainly: `pcair()`
+    computes its **own** ancestry-representative PCs directly from these
+    pruned cohort genotypes plus the KING matrix — it does **not** reuse
+    `ancestry_pca.sh`'s 1000G-projected PCs
+    (`ancestry/cohort_projected_pca.sscore`). That's standard, correct
+    GENESIS methodology (PC-AiR needs PCs computed consistently with its
+    own kinship matrix to pick a maximally-unrelated training subset), but
+    it means this step is "ancestry-aware" in the sense GENESIS defines
+    the term, not a literal reuse of step 26's output as a covariate.
+    Requires **`r_scripts/install_genesis_packages.R`** to have been run
+    once, interactively (`module load R/4.4.0 && R`, not via `sbatch`/
+    batch `Rscript`) — `BiocManager::install()` can prompt
+    `Update all/some/none? [a/s/n]:`, which hangs forever in a
+    non-interactive job.
+    In: `relatedness/cohort_qc.*`, `relatedness/cohort_pruned.prune.in`
+    (step 25), `relatedness/cohort_king.kin0` (step 25).
+    Out: `genesis/cohort_pruned.{bed,bim,fam}` (intermediate),
+    `genesis/cohort.gds`, `genesis/cohort_king_renamed.kin0`
+    (intermediate), `genesis/cohort_pcair.eigenvec` (PC-AiR's own
+    ancestry PCs — inspect how many separate distinct clusters before
+    trusting `n_pcs_for_adjustment` in the R script), and
+    `genesis/cohort_kinship_pcrelate.tsv` — pairwise, ancestry-adjusted
+    kinship, categorized with the same thresholds as step 25
+    (~0.354/0.177/0.0884/0.0442). Hasn't been run yet; the R script logs
+    `pcrelate_result$kinBtwn`'s actual column names before referencing
+    `kin`, so a wrong assumption there will be immediately visible in the
+    job log rather than silently producing an empty/wrong output.
+
 ### Removed: legacy bowtie2 path
 
 `jobs/bowtie2_build.sh`, `jobs/bowtie2.sh`, and the dev/test
@@ -519,6 +575,26 @@ this build's `plink2 --help score` output and, unlike `--pca`, are
 spelled/behave exactly as current PLINK2 docs describe — no changes
 needed there. This step hasn't been run to completion yet; that's the
 next thing to confirm.
+
+**`jobs/genesis_pcrelate.sh`** / **`r_scripts/genesis_pcrelate.R`** (step
+27) — ancestry-adjusted relatedness re-analysis via GENESIS PC-AiR/
+PC-Relate, built out from a proposal pasted in from another Claude
+session. Two real bugs in that proposal were found and fixed before
+writing any job script: `GENESIS::kingToMatrix()` does not understand
+plink2's `--make-king-table` column names (confirmed against GENESIS's
+own source, not assumed), and the proposal referenced BED/BIM/FAM and
+`.kin0` paths that don't exist anywhere in this pipeline. Also worth
+flagging to the analyst directly: PC-AiR computes its own ancestry PCs
+from the pruned cohort genotypes rather than reusing `ancestry_pca.sh`'s
+1000G-projected PCs — correct GENESIS methodology, but a different thing
+than "feed step 26's ancestry PCs in as a covariate" might suggest.
+Prerequisite: run `r_scripts/install_genesis_packages.R` once,
+interactively, to install GENESIS/GWASTools/SNPRelate/gdsfmt into your
+personal R library. Not yet run — next steps are to install the
+packages, submit the job, and review `genesis/cohort_pcair.eigenvec`
+(to pick `n_pcs_for_adjustment` sensibly) and
+`genesis/cohort_kinship_pcrelate.tsv` (the ancestry-adjusted kinship
+table) alongside step 25's plain KING output.
 
 Once ancestry and relatedness are both reviewed, the actual QTL mapping
 work (integrating `vqsr/cohort.pass.normalized.vcf.gz` genotypes with the
