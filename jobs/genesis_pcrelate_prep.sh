@@ -52,7 +52,3 @@ plink2 \
   --extract relatedness/cohort_pruned.prune.in \
   --make-bed \
   --out "${OUT_DIR}/cohort_pruned"
-
-echo "Running PC-AiR / PC-Relate"
-
-Rscript r_scripts/genesis_pcrelate.R
