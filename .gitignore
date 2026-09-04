@@ -5,6 +5,7 @@ bwa_reports/*
 crosscheck/*
 cutadapt_logs/*
 gathered_genotyped_gvcf/*
+genesis/*
 gatk_reports/*
 genomics_db/*
 genotyped_gvcfs/*
