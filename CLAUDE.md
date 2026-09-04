@@ -424,12 +424,18 @@ Each step below: script → what it does → inputs → outputs. Order matches
       `--make-king-table` output directly. It does not — confirmed
       against the GENESIS source (`UW-GAC/GENESIS`
       `R/makeSparseMatrix.R`), which does a strict `intersect()` against
-      literal KING-software column names (`ID1`, `ID2`, `Kinship`), not
-      plink2's (`IID1`, `IID2`, `KINSHIP`). `genesis_pcrelate.R` renames
-      `relatedness/cohort_king.kin0`'s columns to what `kingToMatrix()`
-      expects before calling it, and prints the file's actual column
-      names first as a sanity check rather than assuming the rename
-      targets are right.
+      literal KING-software column names (`ID1`, `ID2`, `Kinship`).
+      `genesis_pcrelate.R` prints `relatedness/cohort_king.kin0`'s actual
+      column names before renaming anything, which caught a second,
+      self-inflicted bug on the first real run: the initial rename logic
+      assumed plink2's generic `IID1`/`IID2` convention and tried to
+      regex-match those — but this pipeline's actual header (confirmed
+      from the job log, not generic docs) is `#FID1 ID1 FID2 ID2 NSNP
+      HETHET IBS0 KINSHIP`, where `ID1`/`ID2` already match what
+      `kingToMatrix()` wants; only `KINSHIP`→`Kinship` needed renaming.
+      The `matches("IID1$")`/`matches("IID2$")` calls matched nothing
+      against the real header and errored out — fixed to a plain,
+      confirmed-correct rename.
     - It referenced nonexistent paths (`plink/cohort_pruned.bed/.bim/.fam`,
       `cohort_king_1.kin0`) — this repo's relatedness step produces
       PLINK2 `.pgen`/`.pvar`/`.psam` filesets (`relatedness/cohort_qc.*`)
@@ -454,16 +460,33 @@ Each step below: script → what it does → inputs → outputs. Order matches
     batch `Rscript`) — `BiocManager::install()` can prompt
     `Update all/some/none? [a/s/n]:`, which hangs forever in a
     non-interactive job.
+    A second real issue turned up on the first cluster run, unrelated to
+    the pasted proposal: `snpgdsBED2GDS()` failed with `the file
+    '.../genesis/cohort.gds' has been created or opened` even after
+    deleting the `.gds` file and re-running. Root cause: `gdsfmt` tracks
+    open GDS files by path in an in-process table for the life of the R
+    session, separate from the filesystem — a prior invocation in the
+    same session that created/opened `cohort.gds` and didn't reach
+    `close()` (e.g. because it errored out first) leaves the path marked
+    open even after the file itself is gone from disk; only closing the
+    handle or ending the R process clears that table, not deleting the
+    file. Fixed by calling `showfile.gds(closeall = TRUE)` (a safe no-op
+    if nothing is open) before every `snpgdsBED2GDS()` call.
     In: `relatedness/cohort_qc.*`, `relatedness/cohort_pruned.prune.in`
     (step 25), `relatedness/cohort_king.kin0` (step 25).
     Out: `genesis/cohort_pruned.{bed,bim,fam}` (intermediate),
     `genesis/cohort.gds`, `genesis/cohort_king_renamed.kin0`
     (intermediate), `genesis/cohort_pcair.eigenvec` (PC-AiR's own
-    ancestry PCs — inspect how many separate distinct clusters before
-    trusting `n_pcs_for_adjustment` in the R script), and
+    ancestry PCs) and `genesis/cohort_pcair_varprop.txt` (each PC's
+    proportion of variance explained, from the confirmed `pcair_result$
+    varprop` field) — use both together to pick `n_pcs_for_adjustment` in
+    the R script: the varprop table for the scree-plot elbow, and a
+    pairs-plot of the eigenvec PCs for how many still visibly separate
+    clusters, the same way step 26's 1000G-projected PCs were checked
+    against known SuperPop labels. Finally,
     `genesis/cohort_kinship_pcrelate.tsv` — pairwise, ancestry-adjusted
     kinship, categorized with the same thresholds as step 25
-    (~0.354/0.177/0.0884/0.0442). Hasn't been run yet; the R script logs
+    (~0.354/0.177/0.0884/0.0442). The R script logs
     `pcrelate_result$kinBtwn`'s actual column names before referencing
     `kin`, so a wrong assumption there will be immediately visible in the
     job log rather than silently producing an empty/wrong output.
@@ -590,11 +613,36 @@ from the pruned cohort genotypes rather than reusing `ancestry_pca.sh`'s
 than "feed step 26's ancestry PCs in as a covariate" might suggest.
 Prerequisite: run `r_scripts/install_genesis_packages.R` once,
 interactively, to install GENESIS/GWASTools/SNPRelate/gdsfmt into your
-personal R library. Not yet run — next steps are to install the
-packages, submit the job, and review `genesis/cohort_pcair.eigenvec`
-(to pick `n_pcs_for_adjustment` sensibly) and
-`genesis/cohort_kinship_pcrelate.tsv` (the ancestry-adjusted kinship
-table) alongside step 25's plain KING output.
+personal R library.
+
+First real cluster run surfaced two more issues, both fixed: (1) the
+`kingToMatrix()` rename step had assumed plink2's generic `IID1`/`IID2`
+column-naming convention, but this pipeline's actual `cohort_king.kin0`
+header uses `ID1`/`ID2` already (only `KINSHIP`→`Kinship` needed
+renaming) — caught immediately from the script's own column-name log
+line rather than failing silently; (2) `snpgdsBED2GDS()` failed with
+"the file ... has been created or opened" even after deleting the `.gds`
+file, because `gdsfmt` tracks open GDS handles in an in-process table
+independent of the filesystem — fixed with `showfile.gds(closeall =
+TRUE)` before every conversion. `genesis_pcrelate.R` now also writes
+`genesis/cohort_pcair_varprop.txt` (variance explained per PC) alongside
+`genesis/cohort_pcair.eigenvec`, to give a concrete scree-plot signal for
+picking `n_pcs_for_adjustment`, not just "look at the eigenvec file."
+
+Open question from the analyst, not yet resolved: whether to swap
+PC-Relate's `pcs` argument for a separately-computed, "corrected" cohort
+PC embedding (built in `jobs/ancestry_check_scoring.sh` and an updated
+`r_scripts/relatedness_viz.R`, reportedly showing good separation by
+1000G SuperPop) instead of PC-AiR's own PCs. Those two files haven't
+been shared/reviewed yet. Worth being explicit about the tradeoff before
+switching: PC-AiR's PCs are specifically corrected for relatedness before
+being handed to PC-Relate (that's the entire point of running PC-AiR
+first rather than a plain PCA) — this cohort has real related pairs (see
+step 25), so a PCA/projection that didn't go through that correction
+could have relatedness-driven clustering baked in, which is exactly the
+bias PC-Relate is meant to control for. Good SuperPop separation on its
+own doesn't rule that out. Needs the actual script content before a
+final call.
 
 Once ancestry and relatedness are both reviewed, the actual QTL mapping
 work (integrating `vqsr/cohort.pass.normalized.vcf.gz` genotypes with the

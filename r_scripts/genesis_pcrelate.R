@@ -16,13 +16,19 @@
 # unrelated training set -- that's what plink_relatedness.sh's
 # cohort_king.kin0 (already computed) is for. GENESIS::kingToMatrix()
 # expects KING-software-style column names (ID1, ID2, Kinship) and does
-# NOT recognize plink2's --make-king-table column names (IID1, IID2,
-# KINSHIP) -- despite what some tutorials assume, it does not autodetect
-# or support the plink2 format directly (confirmed against the GENESIS
-# source, UW-GAC/GENESIS R/makeSparseMatrix.R: it does a strict
-# intersect() against literal "ID1"/"ID2"/<estimator> column names). This
-# script renames the columns to what kingToMatrix expects before calling
-# it, rather than assuming compatibility.
+# NOT recognize plink2's --make-king-table column names directly --
+# despite what some tutorials assume, it does not autodetect or support
+# the plink2 format (confirmed against the GENESIS source,
+# UW-GAC/GENESIS R/makeSparseMatrix.R: it does a strict intersect()
+# against literal "ID1"/"ID2"/<estimator> column names). cohort_king.kin0's
+# actual header, confirmed by running the job (not guessed from generic
+# plink2 docs): `#FID1 ID1 FID2 ID2 NSNP HETHET IBS0 KINSHIP` -- so ID1/ID2
+# already match what kingToMatrix wants as-is; only KINSHIP needs renaming
+# to Kinship. (An earlier draft of this script assumed IID1/IID2 column
+# names, matching plink2's --king-table-format taglist default, and tried
+# to rename those -- that assumption was wrong for this build/invocation's
+# actual output and would have errored with "can't rename columns that
+# don't exist"; fixed here against the real header instead.)
 
 library(GENESIS)
 library(GWASTools)
@@ -42,11 +48,22 @@ king_renamed_fn <- file.path(out_dir, "cohort_king_renamed.kin0")
 out_fn <- file.path(out_dir, "cohort_kinship_pcrelate.tsv")
 
 # How many PC-AiR PCs to hand to PC-Relate for ancestry adjustment. The
-# GENESIS vignette's own example uses 2; adjust this after looking at
-# ref_pca/cohort_projected_pca (or the PC-AiR PCs computed below, in
-# genesis/cohort_pcair.eigenvec) to see how many PCs actually separate
-# distinct ancestry clusters in this cohort -- there's no way to pick
-# this correctly without a human looking at the plot.
+# GENESIS vignette's own example uses 2, but that's not a default to trust
+# blindly -- pick this by looking at two things, both written out below
+# before pcrelate() runs:
+#   1. genesis/cohort_pcair_varprop.txt -- each PC's proportion of variance
+#      explained (pcair_result$varprop). Look for the "elbow" where added
+#      PCs stop explaining much more variance -- PCs past that point are
+#      mostly noise, not structure.
+#   2. genesis/cohort_pcair.eigenvec -- pairs-plot PC1 vs PC2, PC3 vs PC4,
+#      etc. (e.g. with r_scripts/relatedness_viz.R-style ggplot code) and
+#      look for how many PCs still visibly separate distinct clusters,
+#      the same way you already did for ancestry_pca.sh's 1000G-projected
+#      PCs against known SuperPop labels.
+# Confirmed against the GENESIS source (UW-GAC/GENESIS R/pcair.R): the
+# object pcair() returns has $values (eigenvalues) and $varprop (proportion
+# of variance explained) fields, in addition to $vectors/$unrels/$rels
+# used elsewhere in this script.
 n_pcs_for_adjustment <- 2
 
 # ---- Step 1: convert the pruned, QC'd cohort genotypes to GDS format ----
@@ -55,6 +72,23 @@ n_pcs_for_adjustment <- 2
 # relatedness/cohort_pruned.prune.in --make-bed` -- the same pruned
 # marker set already used to compute cohort_king.kin0, so the preliminary
 # KING estimate and this re-analysis are on consistent footing.
+#
+# gdsfmt tracks open GDS files by path in an internal, in-process table for
+# as long as the R session lives -- that table is separate from the
+# filesystem, so a prior run in the same session (or an interactively
+# re-sourced script) that created/opened cohort.gds and didn't reach
+# close(gds_reader) at the bottom (e.g. it errored out first) leaves the
+# path marked "open" even after the .gds file itself is deleted from disk.
+# createfn.gds() then refuses to (re)create it with "has been created or
+# opened", and deleting the file has no effect on that in-memory table --
+# only closing the handle, or ending the R process, clears it.
+# showfile.gds(closeall = TRUE) force-releases anything gdsfmt is tracking
+# for this session regardless of how it was orphaned; it's a no-op if
+# nothing is open, so this is safe to run unconditionally on every
+# invocation, not just after a prior failure.
+showfile.gds(closeall = TRUE)
+if (file.exists(gds_fn)) file.remove(gds_fn)
+
 snpgdsBED2GDS(
   bed.fn = paste0(bed_prefix, ".bed"),
   bim.fn = paste0(bed_prefix, ".bim"),
@@ -68,21 +102,20 @@ sample_ids <- getScanID(genoData)
 cat("Loaded", length(sample_ids), "samples from", gds_fn, "\n")
 
 # ---- Step 2: load the existing KING kinship as the preliminary estimate ----
-# Rename plink2's --make-king-table columns to what kingToMatrix expects.
-# matches()-based renaming (regex, not exact-string) so this is robust to
-# plink2's leading "#" on the first header column, without needing to
-# confirm that convention ahead of time. read_table() (whitespace-
-# flexible), not read_tsv(), matching how r_scripts/relatedness_viz.R
-# already successfully reads this exact file.
+# Confirmed header for this pipeline's cohort_king.kin0 (via plink2
+# --make-king-table on the version installed here):
+#   #FID1  ID1  FID2  ID2  NSNP  HETHET  IBS0  KINSHIP
+# ID1/ID2 already match what kingToMatrix() expects as-is -- only KINSHIP
+# needs renaming to Kinship. (FID1/FID2/NSNP/HETHET/IBS0 are left alone;
+# kingToMatrix() only reads the columns it needs via intersect() against
+# its expected names, so extra columns are harmless.) read_table()
+# (whitespace-flexible), not read_tsv(), matching how
+# r_scripts/relatedness_viz.R already successfully reads this exact file.
 king_raw <- read_table("relatedness/cohort_king.kin0", show_col_types = FALSE)
 cat("cohort_king.kin0 columns:", paste(names(king_raw), collapse = ", "), "\n")
 
 king_renamed <- king_raw %>%
-  rename(
-    ID1 = matches("IID1$"),
-    ID2 = matches("IID2$"),
-    Kinship = KINSHIP
-  )
+  rename(Kinship = KINSHIP)
 write_tsv(king_renamed, king_renamed_fn)
 
 king_mat <- kingToMatrix(
@@ -112,6 +145,17 @@ colnames(pcair_eigenvec) <- paste0("PC", seq_len(ncol(pcair_eigenvec)))
 pcair_eigenvec <- tibble(ID = rownames(pcair_result$vectors)) %>%
   bind_cols(pcair_eigenvec)
 write_tsv(pcair_eigenvec, file.path(out_dir, "cohort_pcair.eigenvec"))
+
+# Scree diagnostic for picking n_pcs_for_adjustment above -- see that
+# variable's comment. Written before pcrelate() runs so it's available to
+# review even if pcrelate() itself fails.
+varprop_df <- tibble(
+  PC = paste0("PC", seq_along(pcair_result$varprop)),
+  varprop = pcair_result$varprop
+)
+write_tsv(varprop_df, file.path(out_dir, "cohort_pcair_varprop.txt"))
+cat("PC-AiR variance proportion by PC:\n")
+print(varprop_df)
 
 # ---- Step 4: PC-Relate -- ancestry-adjusted kinship ----
 genoIter <- GenotypeBlockIterator(genoData)
