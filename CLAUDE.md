@@ -494,8 +494,8 @@ Each step below: script → what it does → inputs → outputs. Order matches
     batch `Rscript`) — `BiocManager::install()` can prompt
     `Update all/some/none? [a/s/n]:`, which hangs forever in a
     non-interactive job.
-    Two more real issues turned up on the first cluster run, unrelated to
-    the pasted proposal:
+    Three more real issues turned up on the first cluster run, unrelated
+    to the pasted proposal:
     - `snpgdsBED2GDS()` failed with `the file '.../genesis/cohort.gds' has
       been created or opened` even after deleting the `.gds` file and
       re-running. Root cause: `gdsfmt` tracks open GDS files by path in an
@@ -516,6 +516,25 @@ Each step below: script → what it does → inputs → outputs. Order matches
       The old regex matched nothing against the real header and would
       have errored — caught immediately from the script's own
       column-name log line, fixed to a plain, confirmed-correct rename.
+    - `kingToMatrix()` was called without an explicit `thresh`, so it
+      defaulted to `NULL`. Confirmed against the GENESIS source
+      (`UW-GAC/GENESIS` `R/makeSparseMatrix.R`): with `thresh = NULL`,
+      the clustering step used to build the sparse matrix draws a
+      "relatedness" edge between any two samples whenever their kinship
+      value is simply `!= 0` — not some meaningful cutoff. Since
+      `plink_relatedness.sh` deliberately left `--king-table-filter`
+      unset, `cohort_king.kin0` has all ~7260 pairs, including near-zero
+      noise values that are nonzero but not remotely "related" — with
+      `thresh = NULL` every one of those still counted as an edge,
+      collapsing the whole cohort into one connected cluster (surfaced
+      via the printed diagnostic: `121 relatives in 1 clusters; largest
+      cluster = 121`, `0 samples with no relatives`), contradicting step
+      25's own finding that most pairs cluster near 0 kinship. Fixed by
+      passing `thresh = 2^(-11/2)` explicitly — GENESIS's own convention
+      for this threshold (the default used by `kingToMatrix()`'s
+      `snpgdsIBDClass` method, and matching `pcair()`'s own
+      `kin.thresh`/`div.thresh` defaults) — rather than relying on the
+      `NULL` default.
     Design update, requested by the analyst after reviewing the initial
     version: `pcrelate()`'s `pcs` argument now uses
     **`cohort_ancestry_pcs_corrected.tsv`** (step 26b's corrected,
