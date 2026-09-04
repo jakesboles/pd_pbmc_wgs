@@ -227,18 +227,37 @@ ancestry_pcs_mat <- ancestry_pcs_mat[, seq_len(n_pcs_for_adjustment), drop = FAL
 # ---- Step 4: PC-Relate -- ancestry-adjusted kinship ----
 genoIter <- GenotypeBlockIterator(genoData)
 
-pcrelate_result <- pcrelate(
+pcrelate_result_1 <- pcrelate(
   gdsobj = genoIter,
-  pcs = ancestry_pcs_mat,
+  pcs = pcair_result$vector[, 1:n_pcs_for_adjustment],
   training.set = pcair_result$unrels,
   BPPARAM = BiocParallel::SerialParam()
 )
 
-# ---- Step 5: extract and categorize pairwise kinship, same thresholds as plink_relatedness.sh ----
-cat("pcrelate_result$kinBtwn columns:",
-    paste(names(pcrelate_result$kinBtwn), collapse = ", "), "\n")
+# ---- Step 4.5: iterate -- use this first-pass kinship to refine PC-AiR ----
+kin_mat_1 <- pcrelateToMatrix(pcrelate_result_1, scaleKin = 2)  # convert kinBtwn output back to matrix form
 
-kin_adjusted <- pcrelate_result$kinBtwn %>%
+pcair_result_3 <- pcair(
+  gdsobj = genoData,
+  kinobj = kin_mat_1,
+  divobj = king_mat,
+  kin.thresh = 2^(-7/2),   # ~0.0442, conventional 3rd-degree cutoff, instead of the 4th-degree default
+  div.thresh = -2^(-7/2)
+)
+
+summary(pcair_result_3)  # check unrelated-set size now
+
+# ---- Step 5: second, refined PC-Relate pass ----
+genoIter2 <- GenotypeBlockIterator(genoData)
+
+pcrelate_result_3 <- pcrelate(
+  gdsobj = genoIter2,
+  pcs = pcair_result_3$vectors[, 1:n_pcs_for_adjustment],
+  training.set = pcair_result_3$unrels,
+  BPPARAM = BiocParallel::SerialParam()
+)
+
+kin_adjusted <- pcrelate_result_3$kinBtwn %>%
   mutate(category = case_when(
     kin > 0.354  ~ "Duplicate/MZ twin",
     kin > 0.177  ~ "1st-degree",
@@ -246,6 +265,15 @@ kin_adjusted <- pcrelate_result$kinBtwn %>%
     kin > 0.0442 ~ "3rd-degree",
     TRUE         ~ "Unrelated"
   ))
+
+table(kin_adjusted$category)
+
+ggplot(kin_adjusted, aes(k0, kin)) +
+  geom_hline(yintercept = 2^(-seq(3,9,2)/2), 
+             linetype = "dashed", 
+             color = "grey") +
+  geom_point(alpha = 0.5) +
+  theme_bw()
 
 print(table(kin_adjusted$category))
 
