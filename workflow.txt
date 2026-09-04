@@ -32,4 +32,5 @@ Subset & reorder ATAC BAMs to WGS reference contig order (subset_reorder_atac_ba
 Verify donor identity with GATK CrosscheckFingerprints
 Estimate pairwise relatedness with PLINK2 KING-robust kinship (plink_relatedness.sh)
 Estimate genetic ancestry via 1000 Genomes PCA projection (ancestry_pca.sh)
-Ancestry-adjusted relatedness with GENESIS PC-AiR/PC-Relate (genesis_pcrelate.sh)
+Correct and validate projected ancestry PCs against 1000G SuperPops (ancestry_check_scoring.sh, ancestry_viz.R)
+Ancestry-adjusted relatedness with GENESIS PC-AiR/PC-Relate (genesis_pcrelate_prep.sh, genesis_pcrelate.R)
