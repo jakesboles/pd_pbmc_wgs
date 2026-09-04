@@ -441,14 +441,14 @@ Each step below: script → what it does → inputs → outputs. Order matches
     `ancestry/cohort_projected_pca.sscore`.
     Out: `ancestry/ref_selfprojected_pca.sscore` (intermediate),
     `ancestry/ancestry_pc1_pc2.png`, `ancestry/ancestry_pc3_pc4.png`
-    (validation plots), and **`cohort_ancestry_pcs_corrected.tsv`**
-    (repo root, not under `ancestry/`) — the cohort's PC1-PC10, corrected
-    onto the reference's native PCA scale, used as the ancestry-PC
-    covariate by step 27 below. Note this file is committed directly at
-    the repo root (not gitignored like the rest of `ancestry/`'s
-    outputs) — a deliberate small-covariate-table exception in the same
-    spirit as `params/cohort.sample_map`, worth keeping in mind if its
-    location or commit status ever needs revisiting.
+    (validation plots), and **`ancestry/cohort_ancestry_pcs_corrected.tsv`**
+    — the cohort's PC1-PC10, corrected onto the reference's native PCA
+    scale, used as the ancestry-PC covariate by step 27 below. Originally
+    written to the repo root and committed directly (as a deliberate
+    small-covariate-table exception in the same spirit as
+    `params/cohort.sample_map`); moved into `ancestry/` and is now
+    gitignored like the rest of that directory's outputs, consistent
+    with every other computed file here rather than a special case.
 
 27. **`jobs/genesis_pcrelate_prep.sh`** / **`r_scripts/genesis_pcrelate.R`**
     — a more rigorous, ancestry-aware relatedness re-analysis using
@@ -537,7 +537,7 @@ Each step below: script → what it does → inputs → outputs. Order matches
       `NULL` default.
     Design update, requested by the analyst after reviewing the initial
     version: `pcrelate()`'s `pcs` argument now uses
-    **`cohort_ancestry_pcs_corrected.tsv`** (step 26b's corrected,
+    **`ancestry/cohort_ancestry_pcs_corrected.tsv`** (step 26b's corrected,
     1000G-reference-projected cohort PCs) instead of `pcair()`'s own PCs.
     The initial version deliberately used PC-AiR's own PCs, reasoning that
     they're uniquely unconfounded by cohort-internal relatedness — but the
@@ -555,13 +555,13 @@ Each step below: script → what it does → inputs → outputs. Order matches
     and still needed regardless of PC source; its own PCs
     (`genesis/cohort_pcair.eigenvec`) are written out only as a diagnostic
     cross-check against the corrected PCs, not used downstream.
-    `genesis_pcrelate.R` matches/reorders `cohort_ancestry_pcs_corrected.tsv`'s
+    `genesis_pcrelate.R` matches/reorders `ancestry/cohort_ancestry_pcs_corrected.tsv`'s
     sample IDs against the GDS's own sample IDs and errors out immediately
     on any mismatch, rather than risking a silent misalignment between
     genotypes and PCs inside `pcrelate()`.
     In: `relatedness/cohort_qc.*`, `relatedness/cohort_pruned.prune.in`
     (step 25), `relatedness/cohort_king.kin0` (step 25),
-    `cohort_ancestry_pcs_corrected.tsv` (step 26b).
+    `ancestry/cohort_ancestry_pcs_corrected.tsv` (step 26b).
     Out: `genesis/cohort_pruned.{bed,bim,fam}` (intermediate),
     `genesis/cohort.gds`, `genesis/cohort_king_renamed.kin0`
     (intermediate), `genesis/cohort_pcair.eigenvec` and
@@ -698,7 +698,7 @@ as the correction factor, sanity-checked via R² > 0.999) rather than
 trusting the theoretical formula outright, then applies it to the
 cohort's projection and validates visually against labeled 1000G
 SuperPop clusters. See step 26b above for details. Produced
-`cohort_ancestry_pcs_corrected.tsv`, now used as step 27's ancestry-PC
+`ancestry/cohort_ancestry_pcs_corrected.tsv`, now used as step 27's ancestry-PC
 covariate (see below).
 
 **`jobs/genesis_pcrelate_prep.sh`** / **`r_scripts/genesis_pcrelate.R`**
@@ -733,7 +733,7 @@ loadings come entirely from the external 1000G reference panel (step
 26's `--pca` never sees this cohort), so cohort relatedness can't bias
 them either way. Combined with step 26b's empirical scale correction and
 confirmed SuperPop separation, that made the switch defensible —
-`genesis_pcrelate.R` now reads `cohort_ancestry_pcs_corrected.tsv` for
+`genesis_pcrelate.R` now reads `ancestry/cohort_ancestry_pcs_corrected.tsv` for
 `pcrelate()`'s `pcs` argument, matching/reordering sample IDs against the
 GDS's own IDs and erroring out on any mismatch rather than risking a
 silent misalignment. `pcair()` is still run, now solely for its

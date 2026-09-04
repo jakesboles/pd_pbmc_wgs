@@ -200,11 +200,11 @@ cat("PC-AiR variance proportion by PC (diagnostic only -- not used below):\n")
 print(varprop_df)
 
 # ---- Step 3.5: load the corrected, reference-projected ancestry PCs ----
-# Written by r_scripts/ancestry_viz.R to the repo root (not under
-# ancestry/, unlike that step's other outputs). Sample IDs (IID) are
-# matched and reordered against this GDS's own sample_ids -- not just
-# assumed to line up -- and any mismatch fails loudly here rather than
-# silently misaligning genotypes and PCs inside pcrelate().
+# Written by r_scripts/ancestry_viz.R to ancestry/, alongside that step's
+# other outputs. Sample IDs (IID) are matched and reordered against this
+# GDS's own sample_ids -- not just assumed to line up -- and any mismatch
+# fails loudly here rather than silently misaligning genotypes and PCs
+# inside pcrelate().
 ancestry_pcs_fn <- "ancestry/cohort_ancestry_pcs_corrected.tsv"
 ancestry_pcs_raw <- read_tsv(ancestry_pcs_fn, show_col_types = FALSE)
 cat(ancestry_pcs_fn, "columns:", paste(names(ancestry_pcs_raw), collapse = ", "), "\n")
