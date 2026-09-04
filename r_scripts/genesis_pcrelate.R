@@ -140,10 +140,27 @@ king_renamed <- king_raw %>%
   rename(Kinship = KINSHIP)
 write_tsv(king_renamed, king_renamed_fn)
 
+# thresh is passed explicitly here -- confirmed against the GENESIS source
+# (UW-GAC/GENESIS R/makeSparseMatrix.R): kingToMatrix()'s default is
+# thresh = NULL, and with NULL its internal clustering step (used to build
+# the sparse block matrix) draws a "relatedness" edge between two samples
+# whenever their kinship value is simply != 0 -- not some meaningful
+# cutoff. Since plink_relatedness.sh deliberately left --king-table-filter
+# unset, cohort_king.kin0 has all ~7260 pairs, including near-zero noise
+# values that are nonzero but not remotely "related" -- with thresh=NULL
+# every one of those still counts as an edge, collapsing the whole cohort
+# into one connected cluster ("121 relatives in 1 clusters; largest
+# cluster = 121", "0 samples with no relatives") despite step 25's own
+# finding that most pairs cluster near 0 kinship. 2^(-11/2) (~0.0221) is
+# GENESIS's own convention for this threshold -- it's the default used by
+# kingToMatrix()'s snpgdsIBDClass method, and matches pcair()'s own
+# kin.thresh/div.thresh defaults -- so it's used explicitly here too,
+# rather than leaving it to the NULL default.
 king_mat <- kingToMatrix(
   king_renamed_fn,
   estimator = "Kinship",
-  sample.include = sample_ids
+  sample.include = sample_ids,
+  thresh = 2^(-11/2)
 )
 
 # ---- Step 3: PC-AiR -- only used here for its unrelated training set ----
@@ -183,11 +200,11 @@ cat("PC-AiR variance proportion by PC (diagnostic only -- not used below):\n")
 print(varprop_df)
 
 # ---- Step 3.5: load the corrected, reference-projected ancestry PCs ----
-# Written by r_scripts/ancestry_viz.R to the repo root (not under
-# ancestry/, unlike that step's other outputs). Sample IDs (IID) are
-# matched and reordered against this GDS's own sample_ids -- not just
-# assumed to line up -- and any mismatch fails loudly here rather than
-# silently misaligning genotypes and PCs inside pcrelate().
+# Written by r_scripts/ancestry_viz.R to ancestry/, alongside that step's
+# other outputs. Sample IDs (IID) are matched and reordered against this
+# GDS's own sample_ids -- not just assumed to line up -- and any mismatch
+# fails loudly here rather than silently misaligning genotypes and PCs
+# inside pcrelate().
 ancestry_pcs_fn <- "ancestry/cohort_ancestry_pcs_corrected.tsv"
 ancestry_pcs_raw <- read_tsv(ancestry_pcs_fn, show_col_types = FALSE)
 cat(ancestry_pcs_fn, "columns:", paste(names(ancestry_pcs_raw), collapse = ", "), "\n")
