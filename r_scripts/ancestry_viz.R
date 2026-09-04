@@ -77,31 +77,33 @@ combined <- bind_rows(ref_plot, cohort_plot)
 p1 <- ggplot() +
   geom_point(data = filter(combined, group != "Cohort"),
              aes(x = PC1, y = PC2, color = group),
-             alpha = 0.6, size = 2) +
+             alpha = 0.6, size = 3) +
   geom_point(data = filter(combined, group == "Cohort"),
              aes(x = PC1, y = PC2),
              color = "black", shape = 4, size = 2, stroke = 1) +
   labs(color = "1000G SuperPop") +
   ggtitle("PC1 vs PC2") +
-  theme_bw() + 
-  theme(axis.text = element_text(color = "black"))
+  theme_bw(base_size = 16) + 
+  theme(axis.text = element_text(color = "black"),
+        plot.title = element_text(hjust = 0.5))
 
-ggsave("ancestry/ancestry_pc1_pc2.png", p1, width = 8, height = 7, dpi = 150)
+ggsave("ancestry/ancestry_pc1_pc2.png", p1, width = 9, height = 7, dpi = 150)
 
 # ---- PC3 vs PC4, same treatment ----
 p2 <- ggplot() +
   geom_point(data = filter(combined, group != "Cohort"),
              aes(x = PC3, y = PC4, color = group),
-             alpha = 0.6, size = 2) +
+             alpha = 0.6, size = 3) +
   geom_point(data = filter(combined, group == "Cohort"),
              aes(x = PC3, y = PC4),
              color = "black", shape = 4, size = 2, stroke = 1) +
   labs(color = "1000G SuperPop", title = "PC3 vs PC4") +
   ggtitle("PC3 vs PC4") +
-  theme_bw() + 
-  theme(axis.text = element_text(color = "black"))
+  theme_bw(base_size = 16) + 
+  theme(axis.text = element_text(color = "black"),
+        plot.title = element_text(hjust = 0.5))
 
-ggsave("ancestry/ancestry_pc3_pc4.png", p2, width = 8, height = 7, dpi = 150)
+ggsave("ancestry/ancestry_pc3_pc4.png", p2, width = 9, height = 7, dpi = 150)
 
 # ---- Save the corrected, labeled cohort table for downstream use (e.g. QTL covariates) ----
 write_tsv(cohort_corrected %>% select(IID, PC1:PC10),
