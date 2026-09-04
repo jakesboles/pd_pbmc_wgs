@@ -86,7 +86,7 @@ out_fn <- file.path(out_dir, "cohort_kinship_pcrelate.tsv")
 # PCs, not the corrected PCs actually used below, but broad agreement
 # between the two is a reasonable sanity check that both are picking up
 # the same real structure.
-n_pcs_for_adjustment <- 2
+n_pcs_for_adjustment <- 4
 
 # ---- Step 1: convert the pruned, QC'd cohort genotypes to GDS format ----
 # bed_prefix.bed/.bim/.fam is written by jobs/genesis_pcrelate_prep.sh via
@@ -188,7 +188,7 @@ print(varprop_df)
 # matched and reordered against this GDS's own sample_ids -- not just
 # assumed to line up -- and any mismatch fails loudly here rather than
 # silently misaligning genotypes and PCs inside pcrelate().
-ancestry_pcs_fn <- "cohort_ancestry_pcs_corrected.tsv"
+ancestry_pcs_fn <- "ancestry/cohort_ancestry_pcs_corrected.tsv"
 ancestry_pcs_raw <- read_tsv(ancestry_pcs_fn, show_col_types = FALSE)
 cat(ancestry_pcs_fn, "columns:", paste(names(ancestry_pcs_raw), collapse = ", "), "\n")
 
