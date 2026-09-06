@@ -579,6 +579,80 @@ Each step below: script → what it does → inputs → outputs. Order matches
     `kin`, so a wrong assumption there will be immediately visible in the
     job log rather than silently producing an empty/wrong output.
 
+27b. **Manual, ancestry-diverse training-set selection** (same script,
+    steps 4-8 internally) — a follow-up fix after running step 27 for
+    real: this cohort's ancestry is skewed (a EUR-majority bulk plus
+    several small, distinct minority-ancestry clusters), which causes
+    plain KING-robust kinship to systematically overestimate relatedness
+    *within* the minority clusters — samples sharing a rare ancestry
+    background also share more alleles by descent-from-population, which
+    naive KING kinship can't distinguish from true recent relatedness.
+    That inflated apparent relatedness caused `pcair()`'s automatic
+    `kin.thresh`/`div.thresh` partition to exclude most of those samples
+    from its "unrelated" training set, leaving it both very small and
+    lopsided toward the EUR-majority cluster. A first attempt at fixing
+    this (built with another Claude session, briefly present in this
+    repo's history) artificially loosened `kin.thresh`/`div.thresh` to
+    force a bigger training set — which just admits more true
+    near-relatives into "unrelated" rather than fixing the underlying
+    ancestry-confound problem, and was replaced rather than kept.
+    The actual fix, implemented as an iterative pipeline within
+    `genesis_pcrelate.R`:
+    - **Pass 1** (steps 4-4.5): run PC-Relate once using step 27's
+      original automatic partition (undersized/biased as it is) to get a
+      first-cut, ancestry-corrected kinship estimate
+      (`kin_mat_pass1`). PC-Relate's ancestry correction (via the `pcs`
+      regression) applies to every pair, not just training-set pairs, so
+      this is already meaningfully better-corrected than raw KING despite
+      pass 1's flawed training set.
+    - **Pass 2** (step 5, diagnostic-only): re-run `pcair()`/`pcrelate()`
+      using `kin_mat_pass1` instead of raw KING for kinship, with
+      GENESIS's own *default* thresholds (not loosened) — used only to
+      flag confidently-related pairs (kin > `related_thresh`, the same
+      ~3rd-degree cutoff used everywhere else in this repo) for exclusion
+      from training-set candidacy, not treated as a final answer.
+    - **Manual selection** (step 6): from the samples pass 2 didn't flag
+      as confidently related, k-means cluster across the corrected
+      ancestry PCs (`n_training_clusters`, deliberately more than the
+      ~4-5 visually distinct ancestry groups, so small/outlier groups are
+      more likely to land in their own cluster rather than being absorbed
+      into the EUR-majority one) and pick `n_per_cluster` representative
+      samples nearest each cluster's own centroid — explicitly
+      guaranteeing ancestry coverage that an automatic threshold-based
+      partition, by chance or by bias, could miss. Writes
+      `genesis/training_set_pc1_pc2.png`/`_pc3_pc4.png` to check by eye
+      against `ancestry/ancestry_pc1_pc2.png`/`_pc3_pc4.png` — any visible
+      ancestry outlier not covered gets added to
+      `manual_force_include_ids` and the script re-run from this step.
+    - **Final pass** (steps 7-8): the hand-picked `training_ids` are fed
+      into `pcair()`'s `unrel.set` argument — confirmed against the
+      GENESIS source (`UW-GAC/GENESIS` `R/pcairPartition.R`) before use,
+      since it's the key piece making manual selection actually work:
+      `unrel.set` does **not** replace the automatic
+      `kin.thresh`/`div.thresh` partition, it forces the named samples
+      into the unrelated set *on top of* it, and — critically — never
+      re-flags two `unrel.set` members as "related to each other" even if
+      their pairwise kinship looks elevated, so an ancestry-inflated pair
+      within the hand-picked set isn't second-guessed back out. GENESIS's
+      own default thresholds are used again here (no more loosening —
+      that's what `unrel.set` replaces). The resulting
+      `pcrelate_result_final` is what actually gets categorized and
+      written to `genesis/cohort_kinship_pcrelate.tsv`.
+    Two other real bugs, unrelated to the training-set problem, were
+    found and fixed while reviewing this: `library(ggplot2)` was never
+    loaded despite a new diagnostic `ggplot()` call being added (would
+    have failed with "could not find function ggplot"), and a typo
+    (`pcair_result$vector`, singular, instead of `$vectors`) had silently
+    reverted `pcrelate()`'s `pcs` argument away from the corrected
+    reference-projected PCs back toward PC-AiR's own — undoing the
+    explicit design decision from step 27 with no comment explaining the
+    change, so treated as an unintentional regression and reverted back
+    to `ancestry_pcs_mat` throughout.
+    Out (new/changed from step 27): `genesis/cohort_manual_training_set.txt`
+    (the final hand-picked sample IDs, one per line),
+    `genesis/training_set_pc1_pc2.png`/`_pc3_pc4.png` (selection sanity
+    check), `genesis/cohort_kinship_pcrelate.png` (kinship-vs-k0 plot).
+
 ### Removed: legacy bowtie2 path
 
 `jobs/bowtie2_build.sh`, `jobs/bowtie2.sh`, and the dev/test
@@ -744,11 +818,33 @@ genesis_pcrelate.sh` was renamed to `jobs/genesis_pcrelate_prep.sh` in
 the same pass — it now only exports BED/BIM/FAM; `genesis_pcrelate.R`
 itself is run afterward separately (`Rscript r_scripts/genesis_pcrelate.R`,
 or interactively) rather than being invoked at the end of that job.
-Not yet run end-to-end with this design — next step is to actually
-submit `genesis_pcrelate_prep.sh` then run `genesis_pcrelate.R`, review
-`genesis/cohort_kinship_pcrelate.tsv`, and sanity-check its ancestry
-adjustment against step 25's plain KING output and step 27's own
-diagnostic `genesis/cohort_pcair.eigenvec` cross-check.
+
+**Ancestry-skew problem found on the first real run, and fixed** (see
+step 27b above for the full design): this cohort's ancestry skew caused
+plain KING-robust kinship to overestimate relatedness within minority
+ancestry clusters, leaving `pcair()`'s automatic partition with a very
+small, EUR-lopsided unrelated training set. An intermediate attempt at
+fixing this (loosening `kin.thresh`/`div.thresh` to force a bigger
+training set) was replaced, not kept — it just admitted more true
+near-relatives rather than fixing the ancestry confound. The actual fix:
+an iterative pipeline (two PC-Relate passes to get an ancestry-corrected
+kinship estimate, then k-means clustering across the corrected ancestry
+PCs to hand-pick a training set with guaranteed ancestry coverage,
+verified against `pcair()`'s real `unrel.set` semantics from the GENESIS
+source before use) that replaces the automatic partition with a manually
+curated one. Two unrelated bugs were also found and fixed while
+reviewing this: a missing `library(ggplot2)` (a new diagnostic plot
+would have failed outright) and a typo (`pcair_result$vector` instead of
+`$vectors`) that had silently reverted `pcrelate()`'s PC source back to
+PC-AiR's own PCs, undoing the corrected-PCs design decision above with
+no explanation — treated as an unintentional regression and reverted.
+Not yet run end-to-end with this design — next step is to submit
+`genesis_pcrelate_prep.sh`, run `genesis_pcrelate.R`, eyeball
+`genesis/training_set_pc1_pc2.png`/`_pc3_pc4.png` against
+`ancestry/ancestry_pc1_pc2.png`/`_pc3_pc4.png` for any missed ancestry
+outlier (adding it to `manual_force_include_ids` and re-running from step
+6 if so), then review `genesis/cohort_kinship_pcrelate.tsv` and
+`genesis/cohort_kinship_pcrelate.png` against step 25's plain KING output.
 
 Once ancestry and relatedness are both reviewed, the actual QTL mapping
 work (integrating `vqsr/cohort.pass.normalized.vcf.gz` genotypes with the
