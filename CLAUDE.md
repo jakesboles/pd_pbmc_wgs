@@ -451,207 +451,111 @@ Each step below: script → what it does → inputs → outputs. Order matches
     with every other computed file here rather than a special case.
 
 27. **`jobs/genesis_pcrelate_prep.sh`** / **`r_scripts/genesis_pcrelate.R`**
-    — a more rigorous, ancestry-aware relatedness re-analysis using
-    Bioconductor's GENESIS PC-AiR/PC-Relate pipeline, requested as a
-    follow-up to step 25's plain KING-robust kinship (which doesn't
-    account for population structure at all). `jobs/genesis_pcrelate.sh`
-    was renamed to `jobs/genesis_pcrelate_prep.sh` — it now only does the
-    PLINK1 BED/BIM/FAM export; `r_scripts/genesis_pcrelate.R` (which does
-    the actual PC-AiR/PC-Relate work) is run afterward separately
-    (`Rscript r_scripts/genesis_pcrelate.R`, or interactively), matching
-    how `ancestry_viz.R`/`relatedness_viz.R` are run rather than being
-    wrapped in a SLURM job of their own. Built from a workflow proposed in
-    another Claude session and pasted in for review; that proposal
-    contained real bugs, fixed here rather than implemented as-is:
-    - It assumed `GENESIS::kingToMatrix()` reads plink2's
-      `--make-king-table` output directly. It does not — confirmed
-      against the GENESIS source (`UW-GAC/GENESIS`
-      `R/makeSparseMatrix.R`), which does a strict `intersect()` against
-      literal KING-software column names (`ID1`, `ID2`, `Kinship`).
-      `genesis_pcrelate.R` prints `relatedness/cohort_king.kin0`'s actual
-      column names before renaming anything, which caught a second,
-      self-inflicted bug on the first real run: the initial rename logic
-      assumed plink2's generic `IID1`/`IID2` convention and tried to
-      regex-match those — but this pipeline's actual header (confirmed
-      from the job log, not generic docs) is `#FID1 ID1 FID2 ID2 NSNP
-      HETHET IBS0 KINSHIP`, where `ID1`/`ID2` already match what
-      `kingToMatrix()` wants; only `KINSHIP`→`Kinship` needed renaming.
-      The `matches("IID1$")`/`matches("IID2$")` calls matched nothing
-      against the real header and errored out — fixed to a plain,
-      confirmed-correct rename.
-    - It referenced nonexistent paths (`plink/cohort_pruned.bed/.bim/.fam`,
-      `cohort_king_1.kin0`) — this repo's relatedness step produces
-      PLINK2 `.pgen`/`.pvar`/`.psam` filesets (`relatedness/cohort_qc.*`)
-      and `relatedness/cohort_king.kin0`, with no BED/BIM/FAM export or
-      `plink/` directory anywhere upstream. `jobs/genesis_pcrelate_prep.sh`
-      re-exports the same pruned, QC'd marker set already used for
-      `cohort_king.kin0` (`plink2 --pfile relatedness/cohort_qc --extract
-      relatedness/cohort_pruned.prune.in --make-bed`) to classic PLINK1
-      BED/BIM/FAM, since `SNPRelate::snpgdsBED2GDS()` (used to build the
-      GDS file GENESIS operates on) doesn't read `.pgen`.
+    — ancestry-aware relatedness re-analysis using Bioconductor GENESIS's
+    PC-Relate, a follow-up to step 25's plain KING-robust kinship (which
+    doesn't account for population structure at all). `genesis_pcrelate_prep.sh`
+    only does the PLINK1 BED/BIM/FAM export PC-Relate's GDS file needs
+    (`SNPRelate::snpgdsBED2GDS()` doesn't read PLINK2's `.pgen`); the
+    actual analysis is `r_scripts/genesis_pcrelate.R`, run afterward
+    separately (`Rscript r_scripts/genesis_pcrelate.R`, or interactively).
     Requires **`r_scripts/install_genesis_packages.R`** to have been run
-    once, interactively (`module load R/4.4.0 && R`, not via `sbatch`/
-    batch `Rscript`) — `BiocManager::install()` can prompt
+    once, interactively — `BiocManager::install()` can prompt
     `Update all/some/none? [a/s/n]:`, which hangs forever in a
     non-interactive job.
-    Three more real issues turned up on the first cluster run, unrelated
-    to the pasted proposal:
-    - `snpgdsBED2GDS()` failed with `the file '.../genesis/cohort.gds' has
-      been created or opened` even after deleting the `.gds` file and
-      re-running. Root cause: `gdsfmt` tracks open GDS files by path in an
-      in-process table for the life of the R session, separate from the
-      filesystem — a prior invocation in the same session that
-      created/opened `cohort.gds` and didn't reach `close()` (e.g. because
-      it errored out first) leaves the path marked open even after the
-      file itself is gone from disk; only closing the handle or ending the
-      R process clears that table, not deleting the file. Fixed by calling
-      `showfile.gds(closeall = TRUE)` (a safe no-op if nothing is open)
-      before every `snpgdsBED2GDS()` call.
-    - The `kingToMatrix()` rename step (below) initially assumed plink2's
-      generic `IID1`/`IID2` column-naming convention and regex-matched
-      those — but this pipeline's actual `cohort_king.kin0` header
-      (confirmed from the job log, not generic docs) is `#FID1 ID1 FID2
-      ID2 NSNP HETHET IBS0 KINSHIP`, where `ID1`/`ID2` already match what
-      `kingToMatrix()` wants; only `KINSHIP`→`Kinship` needed renaming.
-      The old regex matched nothing against the real header and would
-      have errored — caught immediately from the script's own
-      column-name log line, fixed to a plain, confirmed-correct rename.
-    - `kingToMatrix()` was called without an explicit `thresh`, so it
-      defaulted to `NULL`. Confirmed against the GENESIS source
-      (`UW-GAC/GENESIS` `R/makeSparseMatrix.R`): with `thresh = NULL`,
-      the clustering step used to build the sparse matrix draws a
-      "relatedness" edge between any two samples whenever their kinship
-      value is simply `!= 0` — not some meaningful cutoff. Since
-      `plink_relatedness.sh` deliberately left `--king-table-filter`
-      unset, `cohort_king.kin0` has all ~7260 pairs, including near-zero
-      noise values that are nonzero but not remotely "related" — with
-      `thresh = NULL` every one of those still counted as an edge,
-      collapsing the whole cohort into one connected cluster (surfaced
-      via the printed diagnostic: `121 relatives in 1 clusters; largest
-      cluster = 121`, `0 samples with no relatives`), contradicting step
-      25's own finding that most pairs cluster near 0 kinship. Fixed by
-      passing `thresh = 2^(-11/2)` explicitly — GENESIS's own convention
-      for this threshold (the default used by `kingToMatrix()`'s
-      `snpgdsIBDClass` method, and matching `pcair()`'s own
-      `kin.thresh`/`div.thresh` defaults) — rather than relying on the
-      `NULL` default.
-    Design update, requested by the analyst after reviewing the initial
-    version: `pcrelate()`'s `pcs` argument now uses
-    **`ancestry/cohort_ancestry_pcs_corrected.tsv`** (step 26b's corrected,
-    1000G-reference-projected cohort PCs) instead of `pcair()`'s own PCs.
-    The initial version deliberately used PC-AiR's own PCs, reasoning that
-    they're uniquely unconfounded by cohort-internal relatedness — but the
-    reference-projected PCs have that same property for a different
-    reason: their loadings come entirely from the external 1000G reference
-    panel (step 26's `--pca` never sees this cohort at all), so cohort
-    relatedness cannot bias what defines each PC axis either way. Combined
-    with step 26b's empirical scale correction and confirmed SuperPop
-    separation, using them here is defensible and arguably preferable,
-    since it keeps kinship estimation on the same ancestry-PC definition
-    likely to be reused elsewhere as a QTL-mapping covariate, rather than
-    introducing a second, differently-derived PC basis just for this step.
-    `pcair()` is still run — now solely to get a KING-based unrelated
-    "training set" for `pcrelate()`, a different use than supplying PCs
-    and still needed regardless of PC source; its own PCs
-    (`genesis/cohort_pcair.eigenvec`) are written out only as a diagnostic
-    cross-check against the corrected PCs, not used downstream.
-    `genesis_pcrelate.R` matches/reorders `ancestry/cohort_ancestry_pcs_corrected.tsv`'s
-    sample IDs against the GDS's own sample IDs and errors out immediately
-    on any mismatch, rather than risking a silent misalignment between
-    genotypes and PCs inside `pcrelate()`.
-    In: `relatedness/cohort_qc.*`, `relatedness/cohort_pruned.prune.in`
-    (step 25), `relatedness/cohort_king.kin0` (step 25),
-    `ancestry/cohort_ancestry_pcs_corrected.tsv` (step 26b).
-    Out: `genesis/cohort_pruned.{bed,bim,fam}` (intermediate),
-    `genesis/cohort.gds`, `genesis/cohort_king_renamed.kin0`
-    (intermediate), `genesis/cohort_pcair.eigenvec` and
-    `genesis/cohort_pcair_varprop.txt` (PC-AiR's own PCs and their
-    variance-explained, diagnostic-only — see design update above), and
-    `genesis/cohort_kinship_pcrelate.tsv` — pairwise, ancestry-adjusted
-    kinship, categorized with the same thresholds as step 25
-    (~0.354/0.177/0.0884/0.0442). To pick `n_pcs_for_adjustment` in the R
-    script, look at `ancestry/ref_pca.eigenval` (the reference panel's own
-    PCA eigenvalues — the scale the corrected PCs were fit to) for a
-    scree-plot elbow, and step 26b's `ancestry/ancestry_pc1_pc2.png`/
-    `ancestry_pc3_pc4.png` for how many PCs still visibly separate
-    1000G SuperPop clusters. The R script also logs
-    `pcrelate_result$kinBtwn`'s actual column names before referencing
-    `kin`, so a wrong assumption there will be immediately visible in the
-    job log rather than silently producing an empty/wrong output.
-
-27b. **Manual, ancestry-diverse training-set selection** (same script,
-    steps 4-8 internally) — a follow-up fix after running step 27 for
-    real: this cohort's ancestry is skewed (a EUR-majority bulk plus
-    several small, distinct minority-ancestry clusters), which causes
-    plain KING-robust kinship to systematically overestimate relatedness
+    **This cohort's ancestry is skewed** (a EUR-majority bulk plus several
+    small, distinct minority-ancestry clusters), which causes plain
+    KING-robust kinship to systematically overestimate relatedness
     *within* the minority clusters — samples sharing a rare ancestry
     background also share more alleles by descent-from-population, which
     naive KING kinship can't distinguish from true recent relatedness.
-    That inflated apparent relatedness caused `pcair()`'s automatic
-    `kin.thresh`/`div.thresh` partition to exclude most of those samples
-    from its "unrelated" training set, leaving it both very small and
-    lopsided toward the EUR-majority cluster. A first attempt at fixing
-    this (built with another Claude session, briefly present in this
-    repo's history) artificially loosened `kin.thresh`/`div.thresh` to
-    force a bigger training set — which just admits more true
-    near-relatives into "unrelated" rather than fixing the underlying
-    ancestry-confound problem, and was replaced rather than kept.
-    The actual fix, implemented as an iterative pipeline within
-    `genesis_pcrelate.R`:
-    - **Pass 1** (steps 4-4.5): run PC-Relate once using step 27's
-      original automatic partition (undersized/biased as it is) to get a
-      first-cut, ancestry-corrected kinship estimate
-      (`kin_mat_pass1`). PC-Relate's ancestry correction (via the `pcs`
-      regression) applies to every pair, not just training-set pairs, so
-      this is already meaningfully better-corrected than raw KING despite
-      pass 1's flawed training set.
-    - **Pass 2** (step 5, diagnostic-only): re-run `pcair()`/`pcrelate()`
-      using `kin_mat_pass1` instead of raw KING for kinship, with
-      GENESIS's own *default* thresholds (not loosened) — used only to
-      flag confidently-related pairs (kin > `related_thresh`, the same
-      ~3rd-degree cutoff used everywhere else in this repo) for exclusion
-      from training-set candidacy, not treated as a final answer.
-    - **Manual selection** (step 6): from the samples pass 2 didn't flag
-      as confidently related, k-means cluster across the corrected
-      ancestry PCs (`n_training_clusters`, deliberately more than the
-      ~4-5 visually distinct ancestry groups, so small/outlier groups are
-      more likely to land in their own cluster rather than being absorbed
-      into the EUR-majority one) and pick `n_per_cluster` representative
-      samples nearest each cluster's own centroid — explicitly
-      guaranteeing ancestry coverage that an automatic threshold-based
-      partition, by chance or by bias, could miss. Writes
-      `genesis/training_set_pc1_pc2.png`/`_pc3_pc4.png` to check by eye
-      against `ancestry/ancestry_pc1_pc2.png`/`_pc3_pc4.png` — any visible
-      ancestry outlier not covered gets added to
-      `manual_force_include_ids` and the script re-run from this step.
-    - **Final pass** (steps 7-8): the hand-picked `training_ids` are fed
-      into `pcair()`'s `unrel.set` argument — confirmed against the
-      GENESIS source (`UW-GAC/GENESIS` `R/pcairPartition.R`) before use,
-      since it's the key piece making manual selection actually work:
-      `unrel.set` does **not** replace the automatic
-      `kin.thresh`/`div.thresh` partition, it forces the named samples
-      into the unrelated set *on top of* it, and — critically — never
-      re-flags two `unrel.set` members as "related to each other" even if
-      their pairwise kinship looks elevated, so an ancestry-inflated pair
-      within the hand-picked set isn't second-guessed back out. GENESIS's
-      own default thresholds are used again here (no more loosening —
-      that's what `unrel.set` replaces). The resulting
-      `pcrelate_result_final` is what actually gets categorized and
-      written to `genesis/cohort_kinship_pcrelate.tsv`.
-    Two other real bugs, unrelated to the training-set problem, were
-    found and fixed while reviewing this: `library(ggplot2)` was never
-    loaded despite a new diagnostic `ggplot()` call being added (would
-    have failed with "could not find function ggplot"), and a typo
-    (`pcair_result$vector`, singular, instead of `$vectors`) had silently
-    reverted `pcrelate()`'s `pcs` argument away from the corrected
-    reference-projected PCs back toward PC-AiR's own — undoing the
-    explicit design decision from step 27 with no comment explaining the
-    change, so treated as an unintentional regression and reverted back
-    to `ancestry_pcs_mat` throughout.
-    Out (new/changed from step 27): `genesis/cohort_manual_training_set.txt`
-    (the final hand-picked sample IDs, one per line),
+    Several increasingly complicated designs were tried and abandoned
+    while working through this (GENESIS's PC-AiR run once, then
+    iteratively re-run against refined kinship estimates, with an
+    automatic or artificially-loosened relatedness threshold to build its
+    "unrelated" training set) before landing on a much simpler one — see
+    git history if the earlier attempts are ever relevant. **The current
+    design skips PC-AiR entirely.** Confirmed directly against the
+    GENESIS source (`UW-GAC/GENESIS` `R/pcrelate.R`): `pcrelate()`'s
+    `training.set` argument only needs to be a plain character vector of
+    sample IDs (checked only for membership in `sample.include`, no
+    `pcair()`-derived class required), and its `pcs` argument only needs
+    to be any numeric matrix with sample-ID rownames. This repo already
+    has both of the things PC-AiR would otherwise be used to produce:
+    validated, ancestry-representative PCs
+    (`ancestry/cohort_ancestry_pcs_corrected.tsv`, from step 26 +
+    step 26b) and a directly hand-picked unrelated training set (below)
+    — so PC-AiR (and `kingToMatrix()`, and the bugs both came with —
+    plink2's KING column-naming mismatch, a missing `thresh` collapsing
+    the whole cohort into one relatedness cluster) have nothing left to
+    contribute. It's arguably more robust for this specific cohort too:
+    PC-AiR's own PCs are necessarily derived from the cohort's own
+    (ancestry-biased) kinship, while the corrected ancestry PCs used here
+    come entirely from an external 1000G reference panel that never sees
+    this cohort's relatedness or ancestry skew at all.
+    One pass, no iteration:
+    1. Build the GDS file PC-Relate operates on (same
+       `showfile.gds(closeall = TRUE)` handling as before — `gdsfmt`
+       tracks open GDS files in an in-process table independent of the
+       filesystem, so a prior run's unclosed handle can make
+       `snpgdsBED2GDS()` fail with "has been created or opened" even
+       after the `.gds` file itself is deleted; this call is a safe
+       no-op otherwise).
+    2. Load the corrected, validated ancestry PCs, matched/reordered
+       against the GDS's own sample IDs with a hard error on any
+       mismatch.
+    3. Flag confidently-related pairs directly from
+       `relatedness/cohort_king.kin0`'s raw KING kinship (step 25) at a
+       conservative `related_thresh` (~3rd-degree cutoff, matching this
+       repo's other kinship categories) and exclude them from
+       training-set candidacy. This is a deliberately honest, imperfect
+       one-shot heuristic: raw KING is exactly the signal this whole
+       analysis exists to correct for ancestry bias, but that bias
+       inflates modest/near-zero kinship among same-ancestry samples,
+       while a true close relative (~0.25 kinship) still clears a
+       conservative cutoff by a wide margin — worst case, this
+       occasionally excludes a genuinely unrelated candidate from a
+       small, homogeneous ancestry cluster, costing a few training-set
+       candidates in that cluster, not a wrong final kinship value for
+       that pair (its real estimate still comes from the same
+       ancestry-adjusted `pcrelate()` run as everyone else).
+    4. K-means cluster the remaining candidates across the corrected
+       ancestry PCs (`n_training_clusters`, deliberately more than the
+       ~4-5 visually distinct ancestry groups, so small/outlier groups
+       are more likely to land in their own cluster rather than being
+       absorbed into the EUR-majority one) and pick `n_per_cluster`
+       representative samples nearest each cluster's own centroid (using
+       `kmeans()`'s own `$centers` directly, across all clustering PCs —
+       not just PC1/PC2 — for consistency between the clustering and the
+       "nearest centroid" selection). Writes
+       `genesis/training_set_pc1_pc2.png`/`_pc3_pc4.png` to check by eye
+       against `ancestry/ancestry_pc1_pc2.png`/`_pc3_pc4.png`; any
+       visible ancestry outlier not covered gets added to
+       `manual_force_include_ids` and the whole script re-run (cheap now
+       that it's one pass).
+    5. Run `pcrelate()` **once**, with this hand-picked set as
+       `training.set` and the corrected ancestry PCs as `pcs`. This is
+       the final answer — no second pass, no re-running unless the
+       training-set selection itself needs adjusting (step 4).
+    In: `relatedness/cohort_qc.*`, `relatedness/cohort_pruned.prune.in`,
+    `relatedness/cohort_king.kin0` (all step 25),
+    `ancestry/cohort_ancestry_pcs_corrected.tsv` (step 26b).
+    Out: `genesis/cohort_pruned.{bed,bim,fam}` (intermediate),
+    `genesis/cohort.gds`, `genesis/cohort_manual_training_set.txt` (the
+    final hand-picked sample IDs, one per line),
     `genesis/training_set_pc1_pc2.png`/`_pc3_pc4.png` (selection sanity
-    check), `genesis/cohort_kinship_pcrelate.png` (kinship-vs-k0 plot).
+    check), `genesis/cohort_kinship_pcrelate.tsv` — pairwise,
+    ancestry-adjusted kinship, categorized with the same thresholds as
+    step 25 (~0.354/0.177/0.0884/0.0442) — and
+    `genesis/cohort_kinship_pcrelate.png` (kinship-vs-k0 plot). To pick
+    `n_pcs_for_adjustment` in the R script, look at
+    `ancestry/ref_pca.eigenval` (the reference panel's own PCA
+    eigenvalues — the scale the corrected PCs were fit to) for a
+    scree-plot elbow, and step 26b's `ancestry/ancestry_pc1_pc2.png`/
+    `ancestry_pc3_pc4.png` for how many PCs still visibly separate 1000G
+    SuperPop clusters. The R script also logs
+    `pcrelate_result$kinBtwn`'s actual column names before referencing
+    `kin`, so a wrong assumption there will be immediately visible in the
+    job log rather than silently producing an empty/wrong output.
 
 ### Removed: legacy bowtie2 path
 
@@ -776,75 +680,32 @@ SuperPop clusters. See step 26b above for details. Produced
 covariate (see below).
 
 **`jobs/genesis_pcrelate_prep.sh`** / **`r_scripts/genesis_pcrelate.R`**
-(step 27) — ancestry-adjusted relatedness re-analysis via GENESIS
-PC-AiR/PC-Relate, built out from a proposal pasted in from another Claude
-session. Two real bugs in that proposal were found and fixed before
-writing any job script: `GENESIS::kingToMatrix()` does not understand
-plink2's `--make-king-table` column names (confirmed against GENESIS's
-own source, not assumed), and the proposal referenced BED/BIM/FAM and
-`.kin0` paths that don't exist anywhere in this pipeline. Prerequisite:
-run `r_scripts/install_genesis_packages.R` once, interactively, to
-install GENESIS/GWASTools/SNPRelate/gdsfmt into your personal R library.
-
-First real cluster run surfaced two more issues, both fixed: (1) the
-`kingToMatrix()` rename step had assumed plink2's generic `IID1`/`IID2`
-column-naming convention, but this pipeline's actual `cohort_king.kin0`
-header uses `ID1`/`ID2` already (only `KINSHIP`→`Kinship` needed
-renaming) — caught immediately from the script's own column-name log
-line rather than failing silently; (2) `snpgdsBED2GDS()` failed with
-"the file ... has been created or opened" even after deleting the `.gds`
-file, because `gdsfmt` tracks open GDS handles in an in-process table
-independent of the filesystem — fixed with `showfile.gds(closeall =
-TRUE)` before every conversion.
-
-Design question resolved: the analyst asked whether to swap PC-Relate's
-`pcs` argument for step 26b's corrected cohort PC embedding instead of
-using PC-AiR's own PCs. The initial version had deliberately used
-PC-AiR's PCs, reasoning that they're uniquely unconfounded by
-cohort-internal relatedness. On review, the corrected reference-projected
-PCs turn out to have that same property for a different reason: their
-loadings come entirely from the external 1000G reference panel (step
-26's `--pca` never sees this cohort), so cohort relatedness can't bias
-them either way. Combined with step 26b's empirical scale correction and
-confirmed SuperPop separation, that made the switch defensible —
-`genesis_pcrelate.R` now reads `ancestry/cohort_ancestry_pcs_corrected.tsv` for
-`pcrelate()`'s `pcs` argument, matching/reordering sample IDs against the
-GDS's own IDs and erroring out on any mismatch rather than risking a
-silent misalignment. `pcair()` is still run, now solely for its
-KING-based unrelated training-set (`pcair_result$unrels`, still required
-by `pcrelate()` regardless of PC source); its own PCs are written out
-only as a diagnostic cross-check, not used downstream. `jobs/
-genesis_pcrelate.sh` was renamed to `jobs/genesis_pcrelate_prep.sh` in
-the same pass — it now only exports BED/BIM/FAM; `genesis_pcrelate.R`
-itself is run afterward separately (`Rscript r_scripts/genesis_pcrelate.R`,
-or interactively) rather than being invoked at the end of that job.
-
-**Ancestry-skew problem found on the first real run, and fixed** (see
-step 27b above for the full design): this cohort's ancestry skew caused
-plain KING-robust kinship to overestimate relatedness within minority
-ancestry clusters, leaving `pcair()`'s automatic partition with a very
-small, EUR-lopsided unrelated training set. An intermediate attempt at
-fixing this (loosening `kin.thresh`/`div.thresh` to force a bigger
-training set) was replaced, not kept — it just admitted more true
-near-relatives rather than fixing the ancestry confound. The actual fix:
-an iterative pipeline (two PC-Relate passes to get an ancestry-corrected
-kinship estimate, then k-means clustering across the corrected ancestry
-PCs to hand-pick a training set with guaranteed ancestry coverage,
-verified against `pcair()`'s real `unrel.set` semantics from the GENESIS
-source before use) that replaces the automatic partition with a manually
-curated one. Two unrelated bugs were also found and fixed while
-reviewing this: a missing `library(ggplot2)` (a new diagnostic plot
-would have failed outright) and a typo (`pcair_result$vector` instead of
-`$vectors`) that had silently reverted `pcrelate()`'s PC source back to
-PC-AiR's own PCs, undoing the corrected-PCs design decision above with
-no explanation — treated as an unintentional regression and reverted.
+(step 27) — ancestry-aware relatedness re-analysis via GENESIS PC-Relate.
+Went through several increasingly complicated designs (GENESIS's PC-AiR
+run once, then iteratively re-run against refined kinship estimates,
+with an automatic or artificially-loosened relatedness threshold to
+build its training set) while chasing a real problem: this cohort's
+ancestry skew causes plain KING-robust kinship to overestimate
+relatedness within minority ancestry clusters, leaving PC-AiR's
+automatic partition with a very small, EUR-lopsided unrelated training
+set. All of that complexity turned out to be unnecessary — see step 27
+above for the current, much simpler design: PC-AiR is dropped entirely
+(confirmed against the GENESIS source that `pcrelate()` needs neither a
+`pcair()`-derived training set nor PC-AiR's own PCs — just a plain
+sample-ID vector and any numeric PC matrix, both of which this repo
+already has independently), replaced by a single pass that hand-picks an
+ancestry-diverse training set directly from the validated, corrected
+ancestry PCs (step 26b) via k-means, excluding anyone flagged as
+confidently related from step 25's raw KING output first.
 Not yet run end-to-end with this design — next step is to submit
 `genesis_pcrelate_prep.sh`, run `genesis_pcrelate.R`, eyeball
 `genesis/training_set_pc1_pc2.png`/`_pc3_pc4.png` against
 `ancestry/ancestry_pc1_pc2.png`/`_pc3_pc4.png` for any missed ancestry
-outlier (adding it to `manual_force_include_ids` and re-running from step
-6 if so), then review `genesis/cohort_kinship_pcrelate.tsv` and
-`genesis/cohort_kinship_pcrelate.png` against step 25's plain KING output.
+outlier (adding it to `manual_force_include_ids` and re-running the whole
+script if so — cheap now that it's one pass), then review
+`genesis/cohort_kinship_pcrelate.tsv` and
+`genesis/cohort_kinship_pcrelate.png` against step 25's plain KING
+output.
 
 Once ancestry and relatedness are both reviewed, the actual QTL mapping
 work (integrating `vqsr/cohort.pass.normalized.vcf.gz` genotypes with the
