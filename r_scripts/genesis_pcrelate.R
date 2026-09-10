@@ -30,25 +30,35 @@
 # The plan, one pass, no iteration:
 #   1. Build the GDS file PC-Relate operates on (unchanged from before).
 #   2. Load the corrected, validated ancestry PCs (also unchanged).
-#   3. Flag confidently-related pairs directly from
-#      relatedness/cohort_king.kin0's raw KING kinship (step 25) at a
-#      conservative ~3rd-degree cutoff, and exclude them from training-set
-#      candidacy. Raw KING is the kinship signal this whole project
-#      exists to correct for ancestry bias, but that bias inflates
-#      modest/near-zero kinship among same-ancestry samples -- a true
-#      close relative (parent-child, siblings, ~0.25 kinship) still
-#      clears a conservative cutoff by a wide margin, so this one-shot
-#      filter is a reasonable, honestly-imperfect heuristic: it may
-#      occasionally exclude a genuinely unrelated pair from a small,
-#      homogeneous ancestry cluster, which just costs a few training-set
-#      candidates in that cluster, not a wrong final kinship value for
-#      that pair (its actual estimate still comes from the same
-#      ancestry-adjusted pcrelate() run as everyone else).
-#   4. K-means cluster the remaining candidates across the corrected
-#      ancestry PCs and pick representative samples from every cluster,
-#      guaranteeing ancestry coverage a purely automatic partition could
-#      miss or under-represent.
-#   5. Run pcrelate() once, with this hand-picked set as `training.set`
+#   3. Select an ancestry-diverse training set directly from the ancestry
+#      PCs via farthest-point (MaxMin) sampling -- greedily add whichever
+#      remaining sample is farthest (in PC space) from everyone already
+#      selected, so early picks are the most extreme/outlying ancestry
+#      points and later picks fill in the rest of the spread. No kinship
+#      data used at all: an earlier version of this step instead excluded
+#      anyone with elevated raw KING kinship from candidacy, but raw KING
+#      is exactly the signal this whole analysis exists to correct for
+#      ancestry bias, and using it to gate candidacy turned out to be
+#      self-defeating -- the stricter the cutoff, the more it starved
+#      candidacy of the minority-ancestry samples that most needed
+#      representation (confirmed empirically: loosening that cutoff
+#      substantially changed the final kinship estimates, meaning the
+#      excluded candidates were mattering). Farthest-point sampling
+#      sidesteps this rather than tuning around it: true close relatives
+#      (parent-child, full sibs) share ~50% of their genome and so sit
+#      very near each other in ancestry-PC space, meaning maximizing
+#      spread naturally disfavors picking two of them together, without
+#      needing to trust the biased raw numbers to make that call directly.
+#      How many samples to keep is picked from the data too: farthest-point
+#      sampling's per-step "gain" (how far the newly-added point was from
+#      everyone already selected) shrinks monotonically as the training
+#      set fills in -- large gains early (real outliers), small gains
+#      later (increasingly redundant, interior points) -- so the elbow in
+#      that decreasing curve is a principled, visible stopping point,
+#      found automatically here (standard max-distance-from-the-chord
+#      method) but fully overridable after looking at the plot this
+#      script writes out.
+#   4. Run pcrelate() once, with this hand-picked set as `training.set`
 #      and the corrected ancestry PCs as `pcs`. This is the final
 #      answer -- no second pass, no re-running.
 
@@ -80,27 +90,18 @@ out_fn <- file.path(out_dir, "cohort_kinship_pcrelate.tsv")
 #      samples overlaid.
 n_pcs_for_adjustment <- 4
 
-# Conservative ~3rd-degree cutoff (2^(-9/2) =~ 0.0442, matching the
-# categories used throughout this repo) for flagging confidently-related
-# pairs to exclude from training-set candidacy -- see the file header for
-# why a conservative cutoff on raw (ancestry-biased) KING kinship is still
-# a reasonable one-shot filter here.
-related_thresh <- 2^(-9/2)
-
-# Cluster count for k-means over the candidate pool, deliberately more
-# than the number of visually distinct groups in
-# ancestry/ancestry_pc1_pc2.png / ancestry_pc3_pc4.png (about 4-5 here),
-# so small/outlier ancestry groups are more likely to land in their own
-# cluster instead of being absorbed into the EUR-majority cluster.
-n_training_clusters <- 8
-# How many representative samples to keep per cluster.
-n_per_cluster <- 3
+# How many samples to keep in the hand-picked training set. NULL (the
+# default) uses the data-driven elbow in the farthest-point sampling
+# "gain" curve (see step 3 below and the file header) -- set this to a
+# specific integer instead to override that suggestion after looking at
+# genesis/training_set_selection_curve.png, e.g. if the elbow looks too
+# aggressive/conservative for this cohort.
+n_training_samples <- NULL
 # Any sample IDs known (from eyeballing the plots this script writes) to
-# be ancestry outliers that k-means nonetheless failed to select -- fill
-# this in by hand after a first look at genesis/training_set_pc1_pc2.png
-# and training_set_pc3_pc4.png, then just re-run the whole script (it's
-# one pass now, so re-running is cheap). Losing a whole ancestry branch
-# to an unlucky clustering draw defeats the purpose of doing this by hand.
+# be ancestry outliers that got left out -- fill this in by hand after a
+# first look at genesis/training_set_pc1_pc2.png and
+# training_set_pc3_pc4.png, then just re-run the whole script (it's one
+# pass now, so re-running is cheap).
 manual_force_include_ids <- character(0)
 
 # ---- Step 1: convert the pruned, QC'd cohort genotypes to GDS format ----
@@ -161,77 +162,112 @@ ancestry_pcs_mat <- as.matrix(select(ancestry_pcs_ordered, starts_with("PC")))
 rownames(ancestry_pcs_mat) <- ancestry_pcs_ordered$IID
 ancestry_pcs_mat <- ancestry_pcs_mat[, seq_len(n_pcs_for_adjustment), drop = FALSE]
 
-# ---- Step 3: flag confidently-related pairs directly from raw KING kinship ----
-# Same header this pipeline's cohort_king.kin0 always has (confirmed from
-# the job log, not generic docs): #FID1 ID1 FID2 ID2 NSNP HETHET IBS0
-# KINSHIP. read_table() (whitespace-flexible), not read_tsv(), matching
-# r_scripts/relatedness_viz.R.
-king_raw <- read_table("relatedness/cohort_king.kin0", show_col_types = FALSE)
-cat("cohort_king.kin0 columns:", paste(names(king_raw), collapse = ", "), "\n")
-
-flagged_ids <- king_raw %>%
-  filter(KINSHIP > related_thresh) %>%
-  select(ID1, ID2) %>%
-  unlist() %>%
-  unique()
-cat(length(flagged_ids), "samples excluded from training-set candidacy",
-    "(confidently related to someone, raw KINSHIP >", related_thresh, "):\n")
-print(flagged_ids)
-
-# ---- Step 4: hand-pick an ancestry-diverse training set ----
-candidates <- ancestry_pcs_ordered %>%
-  filter(!IID %in% flagged_ids)
-cat(nrow(candidates), "candidates remain for training-set selection\n")
-
+# ---- Step 3: hand-pick an ancestry-diverse training set (farthest-point sampling) ----
+# Scaled to unit variance per PC before computing distances, so PC1
+# doesn't dominate purely because it explains more raw variance than
+# later PCs -- reasonable here since n_pcs_for_adjustment was already
+# chosen (see that variable's comment) to include only PCs that carry
+# real ancestry signal, not noise, so weighting them equally is
+# weighting real structure equally, not amplifying noise.
 pc_cols <- paste0("PC", seq_len(n_pcs_for_adjustment))
-scaled_mat <- scale(as.matrix(candidates[, pc_cols]))
-rownames(scaled_mat) <- candidates$IID
+scaled_mat <- scale(as.matrix(ancestry_pcs_ordered[, pc_cols]))
+rownames(scaled_mat) <- ancestry_pcs_ordered$IID
+n_all <- nrow(scaled_mat)
 
-set.seed(42)
-km <- kmeans(scaled_mat, centers = n_training_clusters, nstart = 25)
-candidates$cluster <- km$cluster
-# Distance to each sample's OWN cluster centroid, in the same scaled space
-# k-means actually clustered in (across all n_pcs_for_adjustment PCs, not
-# just PC1/PC2) -- using km$centers directly avoids any mismatch between
-# the clustering distances and a separately-recomputed mean.
-candidates$dist_to_centroid <- sqrt(rowSums((scaled_mat - km$centers[km$cluster, ])^2))
+sq_dist_to <- function(mat, point) rowSums(sweep(mat, 2, point)^2)
 
-training_selection <- candidates %>%
-  group_by(cluster) %>%
-  slice_min(order_by = dist_to_centroid, n = n_per_cluster) %>%
-  ungroup()
-cat(nrow(training_selection), "samples selected across", n_training_clusters, "clusters\n")
-print(table(training_selection$cluster))
+# Deterministic seed point (farthest from the overall centroid), not a
+# random pick -- the whole ranking that follows is then fully
+# reproducible with no set.seed() needed.
+centroid <- colMeans(scaled_mat)
+seed_idx <- which.max(sq_dist_to(scaled_mat, centroid))
 
-# Visual sanity check against the full candidate spread -- saved rather
-# than print()'d, since this script may run non-interactively via
+order_idx <- integer(n_all)
+gain <- rep(NA_real_, n_all)  # gain[i]: min-distance the i-th point added had to the set already selected
+order_idx[1] <- seed_idx
+min_dist <- sqrt(sq_dist_to(scaled_mat, scaled_mat[seed_idx, ]))
+min_dist[seed_idx] <- -Inf
+
+for (i in 2:n_all) {
+  nxt <- which.max(min_dist)
+  order_idx[i] <- nxt
+  gain[i] <- min_dist[nxt]
+  d_nxt <- sqrt(sq_dist_to(scaled_mat, scaled_mat[nxt, ]))
+  min_dist <- pmin(min_dist, d_nxt)
+  min_dist[nxt] <- -Inf
+}
+
+selection_curve <- tibble(
+  rank = seq_len(n_all),
+  IID = rownames(scaled_mat)[order_idx],
+  gain = gain
+)
+write_tsv(selection_curve, file.path(out_dir, "training_set_selection_curve.tsv"))
+
+# Elbow in the (monotonically non-increasing) gain curve: standard
+# max-distance-from-the-chord method over ranks 2..n_all (gain[1] is NA
+# -- the seed point has no prior set to be "far" from). Purely a
+# suggestion -- overridden by setting n_training_samples above if the
+# plot below suggests a different cutoff.
+y <- gain[-1]
+x <- seq_along(y)
+xn <- (x - min(x)) / (max(x) - min(x))
+yn <- (y - min(y)) / (max(y) - min(y))
+x1 <- xn[1]; y1 <- yn[1]; x2 <- xn[length(xn)]; y2 <- yn[length(yn)]
+chord_dist <- abs((y2 - y1) * xn - (x2 - x1) * yn + x2 * y1 - y2 * x1) /
+  sqrt((y2 - y1)^2 + (x2 - x1)^2)
+suggested_n <- which.max(chord_dist) + 1  # +1: y[1] corresponds to a training set of size 2
+
+if (is.null(n_training_samples)) {
+  n_training_samples <- suggested_n
+  cat("n_training_samples not set -- using elbow-suggested value:", suggested_n, "\n")
+} else {
+  cat("Using manually-set n_training_samples =", n_training_samples,
+      "(elbow suggested", suggested_n, ")\n")
+}
+
+p_curve <- ggplot(selection_curve[-1, ], aes(rank, gain)) +
+  geom_line() +
+  geom_point() +
+  geom_vline(xintercept = suggested_n, linetype = "dashed", color = "red") +
+  labs(title = "Farthest-point sampling: diversity gain per added sample",
+       subtitle = paste("Dashed line = suggested elbow at rank", suggested_n),
+       x = "Samples selected so far", y = "Distance of newly-added sample to selected set") +
+  theme_bw()
+ggsave(file.path(out_dir, "training_set_selection_curve.png"), p_curve, width = 8, height = 6, dpi = 150)
+
+training_selection_ids <- rownames(scaled_mat)[order_idx[seq_len(n_training_samples)]]
+
+# Visual sanity check against the full cohort's ancestry spread -- saved
+# rather than print()'d, since this script may run non-interactively via
 # Rscript. Cross-check both plots against ancestry/ancestry_pc1_pc2.png
 # and ancestry_pc3_pc4.png: if a visibly distinct ancestry group (e.g. an
 # EAS singleton, AFR-leaning points) isn't covered by the red points
-# below, add its sample ID(s) to manual_force_include_ids above and
-# re-run the whole script.
+# below, either raise n_training_samples or add its sample ID(s) to
+# manual_force_include_ids above, then re-run the whole script.
+ancestry_pcs_ordered$in_training <- ancestry_pcs_ordered$IID %in% training_selection_ids
 p_train_pc12 <- ggplot() +
-  geom_point(data = candidates, aes(PC1, PC2), color = "grey70", alpha = 0.5) +
-  geom_point(data = training_selection, aes(PC1, PC2), color = "red", size = 3) +
-  labs(title = "Hand-picked training set vs. candidate ancestry spread (PC1 vs PC2)") +
+  geom_point(data = ancestry_pcs_ordered, aes(PC1, PC2), color = "grey70", alpha = 0.5) +
+  geom_point(data = filter(ancestry_pcs_ordered, in_training), aes(PC1, PC2), color = "red", size = 3) +
+  labs(title = "Hand-picked training set vs. full cohort ancestry spread (PC1 vs PC2)") +
   theme_bw()
 ggsave(file.path(out_dir, "training_set_pc1_pc2.png"), p_train_pc12, width = 8, height = 7, dpi = 150)
 
 if (n_pcs_for_adjustment >= 4) {
   p_train_pc34 <- ggplot() +
-    geom_point(data = candidates, aes(PC3, PC4), color = "grey70", alpha = 0.5) +
-    geom_point(data = training_selection, aes(PC3, PC4), color = "red", size = 3) +
-    labs(title = "Hand-picked training set vs. candidate ancestry spread (PC3 vs PC4)") +
+    geom_point(data = ancestry_pcs_ordered, aes(PC3, PC4), color = "grey70", alpha = 0.5) +
+    geom_point(data = filter(ancestry_pcs_ordered, in_training), aes(PC3, PC4), color = "red", size = 3) +
+    labs(title = "Hand-picked training set vs. full cohort ancestry spread (PC3 vs PC4)") +
     theme_bw()
   ggsave(file.path(out_dir, "training_set_pc3_pc4.png"), p_train_pc34, width = 8, height = 7, dpi = 150)
 }
 
-training_ids <- unique(c(training_selection$IID, manual_force_include_ids))
+training_ids <- unique(c(training_selection_ids, manual_force_include_ids))
 cat(length(training_ids), "final hand-picked training set:\n")
 print(training_ids)
 writeLines(training_ids, file.path(out_dir, "cohort_manual_training_set.txt"))
 
-# ---- Step 5: PC-Relate -- one pass, using the hand-picked training set ----
+# ---- Step 4: PC-Relate -- one pass, using the hand-picked training set ----
 # Confirmed against the GENESIS source (UW-GAC/GENESIS R/pcrelate.R):
 # `training.set` only needs to be a character vector of sample IDs
 # present in `sample.include` (no pcair()-derived class required), and

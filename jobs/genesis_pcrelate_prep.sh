@@ -38,7 +38,13 @@
 # object. Since this repo already has validated ancestry PCs
 # (ancestry/cohort_ancestry_pcs_corrected.tsv, from ancestry_pca.sh +
 # ancestry_check_scoring.sh/ancestry_viz.R) and hand-picks its own
-# training set directly, PC-AiR has nothing left to contribute here.
+# training set directly, PC-AiR has nothing left to contribute here. The
+# training set itself is chosen by farthest-point sampling directly on
+# those ancestry PCs (no kinship data involved), not from
+# cohort_king.kin0 -- an earlier version excluded samples by raw KING
+# kinship first, but that kinship is exactly what's ancestry-biased here,
+# and using it to gate candidacy just starved the training set of the
+# minority-ancestry samples that most needed representation.
 
 set -euo pipefail
 
