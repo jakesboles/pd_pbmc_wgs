@@ -503,51 +503,64 @@ Each step below: script → what it does → inputs → outputs. Order matches
     2. Load the corrected, validated ancestry PCs, matched/reordered
        against the GDS's own sample IDs with a hard error on any
        mismatch.
-    3. Flag confidently-related pairs directly from
-       `relatedness/cohort_king.kin0`'s raw KING kinship (step 25) at a
-       conservative `related_thresh` (~3rd-degree cutoff, matching this
-       repo's other kinship categories) and exclude them from
-       training-set candidacy. This is a deliberately honest, imperfect
-       one-shot heuristic: raw KING is exactly the signal this whole
-       analysis exists to correct for ancestry bias, but that bias
-       inflates modest/near-zero kinship among same-ancestry samples,
-       while a true close relative (~0.25 kinship) still clears a
-       conservative cutoff by a wide margin — worst case, this
-       occasionally excludes a genuinely unrelated candidate from a
-       small, homogeneous ancestry cluster, costing a few training-set
-       candidates in that cluster, not a wrong final kinship value for
-       that pair (its real estimate still comes from the same
-       ancestry-adjusted `pcrelate()` run as everyone else).
-    4. K-means cluster the remaining candidates across the corrected
-       ancestry PCs (`n_training_clusters`, deliberately more than the
-       ~4-5 visually distinct ancestry groups, so small/outlier groups
-       are more likely to land in their own cluster rather than being
-       absorbed into the EUR-majority one) and pick `n_per_cluster`
-       representative samples nearest each cluster's own centroid (using
-       `kmeans()`'s own `$centers` directly, across all clustering PCs —
-       not just PC1/PC2 — for consistency between the clustering and the
-       "nearest centroid" selection). Writes
-       `genesis/training_set_pc1_pc2.png`/`_pc3_pc4.png` to check by eye
-       against `ancestry/ancestry_pc1_pc2.png`/`_pc3_pc4.png`; any
-       visible ancestry outlier not covered gets added to
-       `manual_force_include_ids` and the whole script re-run (cheap now
-       that it's one pass).
-    5. Run `pcrelate()` **once**, with this hand-picked set as
+    3. Select an ancestry-diverse training set directly from the
+       corrected ancestry PCs via **farthest-point (MaxMin) sampling**:
+       greedily add whichever remaining sample is farthest, in
+       (unit-variance-scaled) PC space, from everyone already selected,
+       so the first picks are the most extreme/outlying ancestry points
+       and later picks fill in the rest of the spread. **No kinship data
+       used at all.** An earlier version of this step instead excluded
+       anyone with elevated raw KING kinship (step 25) from candidacy —
+       replaced, not kept, after that approach turned out to be
+       self-defeating: raw KING is exactly the signal this whole analysis
+       exists to correct for ancestry bias, and gating candidacy on it
+       meant the stricter the cutoff, the more it starved candidacy of
+       the minority-ancestry samples that most needed representation
+       (confirmed empirically — loosening that cutoff substantially
+       changed the final kinship estimates). Farthest-point sampling
+       sidesteps the bias rather than tuning around it: true close
+       relatives (parent-child, full sibs) share ~50% of their genome and
+       so sit very near each other in ancestry-PC space, meaning
+       maximizing spread naturally disfavors picking two of them
+       together, without needing to trust the biased raw numbers at all.
+       How many samples to keep (`n_training_samples`) is also
+       data-driven by default: farthest-point sampling's per-step "gain"
+       (how far the newly-added sample was from everyone already
+       selected) shrinks monotonically as the training set fills in —
+       large gains early (real outliers), small gains later
+       (increasingly redundant, interior points) — so the R script finds
+       the elbow in that decreasing curve automatically (standard
+       max-distance-from-the-chord method) and uses it unless
+       `n_training_samples` is set manually after looking at
+       `genesis/training_set_selection_curve.png`. Writes
+       `genesis/training_set_pc1_pc2.png`/`_pc3_pc4.png` to check the
+       resulting selection by eye against
+       `ancestry/ancestry_pc1_pc2.png`/`_pc3_pc4.png`; any visible
+       ancestry outlier not covered can be raised via
+       `n_training_samples` or added directly to
+       `manual_force_include_ids`, then the whole script re-run (cheap
+       now that it's one pass).
+    4. Run `pcrelate()` **once**, with this hand-picked set as
        `training.set` and the corrected ancestry PCs as `pcs`. This is
        the final answer — no second pass, no re-running unless the
-       training-set selection itself needs adjusting (step 4).
-    In: `relatedness/cohort_qc.*`, `relatedness/cohort_pruned.prune.in`,
-    `relatedness/cohort_king.kin0` (all step 25),
+       training-set selection itself needs adjusting (step 3).
+    In: `relatedness/cohort_qc.*`, `relatedness/cohort_pruned.prune.in`
+    (step 25 — for the GDS conversion only; this script no longer reads
+    `cohort_king.kin0` at all, see step 3 above),
     `ancestry/cohort_ancestry_pcs_corrected.tsv` (step 26b).
     Out: `genesis/cohort_pruned.{bed,bim,fam}` (intermediate),
-    `genesis/cohort.gds`, `genesis/cohort_manual_training_set.txt` (the
+    `genesis/cohort.gds`, `genesis/training_set_selection_curve.tsv`/`.png`
+    (the full farthest-point ranking and its diversity-gain curve, with
+    the auto-suggested elbow marked — the main diagnostic for picking
+    `n_training_samples`), `genesis/cohort_manual_training_set.txt` (the
     final hand-picked sample IDs, one per line),
     `genesis/training_set_pc1_pc2.png`/`_pc3_pc4.png` (selection sanity
-    check), `genesis/cohort_kinship_pcrelate.tsv` — pairwise,
-    ancestry-adjusted kinship, categorized with the same thresholds as
-    step 25 (~0.354/0.177/0.0884/0.0442) — and
+    check against the full cohort spread), `genesis/cohort_kinship_pcrelate.tsv`
+    — pairwise, ancestry-adjusted kinship, categorized with the same
+    thresholds as step 25 (~0.354/0.177/0.0884/0.0442) — and
     `genesis/cohort_kinship_pcrelate.png` (kinship-vs-k0 plot). To pick
-    `n_pcs_for_adjustment` in the R script, look at
+    `n_pcs_for_adjustment` in the R script (which also sets the
+    dimensionality of the farthest-point sampling above), look at
     `ancestry/ref_pca.eigenval` (the reference panel's own PCA
     eigenvalues — the scale the corrected PCs were fit to) for a
     scree-plot elbow, and step 26b's `ancestry/ancestry_pc1_pc2.png`/
@@ -681,25 +694,38 @@ covariate (see below).
 
 **`jobs/genesis_pcrelate_prep.sh`** / **`r_scripts/genesis_pcrelate.R`**
 (step 27) — ancestry-aware relatedness re-analysis via GENESIS PC-Relate.
-Went through several increasingly complicated designs (GENESIS's PC-AiR
-run once, then iteratively re-run against refined kinship estimates,
-with an automatic or artificially-loosened relatedness threshold to
-build its training set) while chasing a real problem: this cohort's
-ancestry skew causes plain KING-robust kinship to overestimate
-relatedness within minority ancestry clusters, leaving PC-AiR's
-automatic partition with a very small, EUR-lopsided unrelated training
-set. All of that complexity turned out to be unnecessary — see step 27
-above for the current, much simpler design: PC-AiR is dropped entirely
-(confirmed against the GENESIS source that `pcrelate()` needs neither a
-`pcair()`-derived training set nor PC-AiR's own PCs — just a plain
-sample-ID vector and any numeric PC matrix, both of which this repo
-already has independently), replaced by a single pass that hand-picks an
-ancestry-diverse training set directly from the validated, corrected
-ancestry PCs (step 26b) via k-means, excluding anyone flagged as
-confidently related from step 25's raw KING output first.
+Went through several increasingly complicated designs while chasing a
+real problem: this cohort's ancestry skew causes plain KING-robust
+kinship to overestimate relatedness within minority ancestry clusters.
+First GENESIS's PC-AiR, run once then iteratively re-run against refined
+kinship estimates with an automatic or artificially-loosened relatedness
+threshold to build its training set; then, after dropping PC-AiR
+entirely (confirmed against the GENESIS source that `pcrelate()` needs
+neither a `pcair()`-derived training set nor PC-AiR's own PCs), a
+still-kinship-gated design that excluded anyone with elevated raw KING
+kinship from training-set candidacy before hand-picking the rest via
+k-means. That still had the same underlying problem one level down: raw
+KING is exactly the signal being corrected for ancestry bias, so gating
+candidacy on it directly was self-defeating — confirmed empirically, since
+loosening that cutoff substantially changed the final kinship estimates,
+meaning the excluded candidates were mattering.
+**Current design: no kinship data used in training-set selection at
+all.** The training set is now chosen purely by farthest-point (MaxMin)
+sampling directly on the validated, corrected ancestry PCs (step 26b) —
+greedily picking whichever remaining sample is most different in
+ancestry-PC space from everyone already picked. This works as a
+relatedness filter too, not just a diversity one: true close relatives
+share ~50% of their genome and so sit very close together in ancestry-PC
+space, so maximizing spread naturally avoids picking two of them
+together, without needing to trust the biased raw KING numbers to make
+that call. Training-set *size* is now data-driven as well, via the elbow
+in the sampling's diversity-gain curve, rather than a guessed constant.
+See step 27 above for the full design.
 Not yet run end-to-end with this design — next step is to submit
-`genesis_pcrelate_prep.sh`, run `genesis_pcrelate.R`, eyeball
-`genesis/training_set_pc1_pc2.png`/`_pc3_pc4.png` against
+`genesis_pcrelate_prep.sh`, run `genesis_pcrelate.R`, look at
+`genesis/training_set_selection_curve.png` (confirm the auto-suggested
+`n_training_samples` looks reasonable, adjusting it by hand if not), then
+eyeball `genesis/training_set_pc1_pc2.png`/`_pc3_pc4.png` against
 `ancestry/ancestry_pc1_pc2.png`/`_pc3_pc4.png` for any missed ancestry
 outlier (adding it to `manual_force_include_ids` and re-running the whole
 script if so — cheap now that it's one pass), then review
