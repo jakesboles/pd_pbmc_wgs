@@ -1,5 +1,5 @@
 # Reviews the two independent biological-sex QC signals: PLINK2's
-# X-heterozygosity check (jobs/plink_sex_check.sh) and the chrX/chrY
+# X-heterozygosity check (jobs/plink_sex_check_prep.sh) and the chrX/chrY
 # read-depth-ratio check (jobs/samtools_sex_check.sh +
 # jobs/make_sex_depth_table.sh). Run manually/interactively, like
 # relatedness_viz.R and ancestry_viz.R -- not a SLURM job.
@@ -29,35 +29,87 @@ ggplot(depth, aes(chrX_ratio, chrY_ratio, label = sample)) +
 #     TRUE ~ NA_character_
 #   ))
 
-# ---- X-heterozygosity check (PLINK2) ----
-# Filename/columns confirmed by print, not assumed -- see
-# jobs/plink_sex_check.sh's header comment on why this is unverified
-# against this cluster's plink2 build.
-plink_fn <- "sex_check/cohort_sex_check.sexcheck"
-if (file.exists(plink_fn)) {
-  plink_sex <- read_table(plink_fn, show_col_types = FALSE)
-  cat(plink_fn, "columns:", paste(names(plink_sex), collapse = ", "), "\n")
-  print(plink_sex)
+# ---- X-heterozygosity check (PLINK2, computed by hand) ----
+# This cluster's plink2 build (self-reports "24 Jul 2019", v2.00a2LM --
+# an alpha 2 release) has no --check-sex, --impute-sex, or --het flag at
+# all, confirmed directly against its own `plink2 --help` output rather
+# than assumed from generic docs (see jobs/plink_sex_check_prep.sh's
+# header comment). That job instead exports the same raw ingredients
+# --check-sex would use internally -- per-variant allele frequencies
+# (cohort_chrX_qc.afreq) and per-sample additive genotypes
+# (cohort_chrX_qc.raw) -- and this reproduces its X inbreeding
+# coefficient by hand:
+#   F_i = 1 - (observed heterozygosity for sample i) /
+#             (expected heterozygosity for sample i under HWE)
+# with expected heterozygosity per variant = 2*p*(1-p) from its allele
+# frequency -- the standard method-of-moments inbreeding-coefficient
+# estimator, not a guess at --check-sex's internals. F near 1 (near-zero
+# observed heterozygosity) => male; F near 0 (normal heterozygosity) =>
+# female.
+freq_fn <- "sex_check/cohort_chrX_qc.afreq"
+raw_fn <- "sex_check/cohort_chrX_qc.raw"
+
+if (file.exists(freq_fn) && file.exists(raw_fn)) {
+  freq <- read_tsv(freq_fn, show_col_types = FALSE)
+  cat(freq_fn, "columns:", paste(names(freq), collapse = ", "), "\n")
+
+  # .raw files are space-delimited with a literal "NA" for missing calls
+  # -- read_table's default na = "NA" handles this without extra options.
+  raw <- read_table(raw_fn, show_col_types = FALSE)
+  cat(raw_fn, "columns (first 10):",
+      paste(head(names(raw), 10), collapse = ", "), "...\n")
+
+  geno_cols <- setdiff(names(raw), c("FID", "IID", "PAT", "MAT", "SEX", "PHENOTYPE"))
+  # Column names are "<variant ID>_<counted allele>" -- IDs themselves
+  # only ever contain colons (--set-all-var-ids '@:#:$r:$a' in
+  # plink_sex_check_prep.sh), so splitting off everything after the LAST
+  # underscore recovers the ID cleanly, with no ambiguity.
+  variant_ids <- sub("_[^_]+$", "", geno_cols)
+
+  # "ID" is confirmed by the print above, not assumed -- update
+  # freq_id_col if this build's --freq output names it differently.
+  freq_id_col <- "ID"
+  p <- freq$ALT_FREQS[match(variant_ids, freq[[freq_id_col]])]
+  exp_het_per_variant <- 2 * p * (1 - p)
+
+  geno_mat <- as.matrix(raw[, geno_cols])
+  het_mat <- geno_mat == 1  # TRUE where heterozygous; NA propagates for missing calls
+  not_na <- !is.na(geno_mat)
+
+  obs_het <- rowSums(het_mat, na.rm = TRUE)
+  exp_het <- as.numeric(not_na %*% exp_het_per_variant)
+
+  fstat <- tibble(
+    IID = raw$IID,
+    n_variants = rowSums(not_na),
+    obs_het = obs_het,
+    exp_het = exp_het,
+    F = 1 - obs_het / exp_het
+  )
+  write_tsv(fstat, "sex_check/cohort_sex_check_fstat.tsv")
+  print(fstat)
+
+  ggplot(fstat, aes(F)) +
+    geom_histogram(bins = 40) +
+    labs(title = "X inbreeding coefficient (F) per sample",
+         subtitle = "F near 1 = male, F near 0 = female") +
+    theme_linedraw()
 } else {
-  cat(plink_fn, "not found -- check jobs/plink_sex_check.sh's own log for",
-      "the actual output filename plink2 wrote, and update this path.\n")
-  plink_sex <- NULL
+  cat(freq_fn, "and/or", raw_fn, "not found -- run",
+      "jobs/plink_sex_check_prep.sh first.\n")
+  fstat <- NULL
 }
 
 # ---- Cross-check the two methods against each other ----
-# Only meaningful once plink_fn's real ID column name is confirmed above
-# (IID in PLINK1.9-style output, but not assumed here) -- update
-# plink_id_col below to match before trusting this join.
-if (!is.null(plink_sex)) {
-  plink_id_col <- "IID"
+if (!is.null(fstat)) {
   combined <- depth %>%
-    left_join(plink_sex, by = c("sample" = plink_id_col))
+    left_join(fstat, by = c("sample" = "IID"))
   print(combined)
 }
 
 # ---- Cross-check against self-reported/clinical sex ----
 # No demographics file path is hardcoded here -- this repo doesn't
-# document one. Join `depth` (and/or `plink_sex`) against whatever sheet
+# document one. Join `depth` (and/or `fstat`) against whatever sheet
 # tracks self-reported sex by sample ID, and treat any mismatch as a real
 # flag (sample mix-up somewhere upstream, or a genuine biological edge
 # case) worth resolving before trusting that donor's data downstream --
