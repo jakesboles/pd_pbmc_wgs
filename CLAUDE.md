@@ -570,45 +570,61 @@ Each step below: script → what it does → inputs → outputs. Order matches
     `kin`, so a wrong assumption there will be immediately visible in the
     job log rather than silently producing an empty/wrong output.
 
-28. **`jobs/plink_sex_check.sh`** / **`jobs/samtools_sex_check.sh`** +
+28. **`jobs/plink_sex_check_prep.sh`** / **`jobs/samtools_sex_check.sh`** +
     **`jobs/make_sex_depth_table.sh`** / **`r_scripts/sex_check_viz.R`**
     — confirms each donor's biological sex, as a QC checkpoint against
     the demographics sheet's self-reported sex (catching sample mix-ups)
     and as a sanity check on WGS↔multiome donor linkage. Two independent
     signals, deliberately not requiring any new tool install (no
     `somalier`):
-    - **`plink_sex_check.sh`** — X-chromosome heterozygosity. Males are
-      hemizygous for X outside the pseudoautosomal regions (PAR1/PAR2,
-      diploid in both sexes), so their non-PAR X genotypes should come
-      back essentially all-homozygous; females show normal
-      heterozygosity. `plink2 --check-sex` computes an X inbreeding
-      coefficient (F) per sample and calls sex from it. Not a SLURM
-      array — one set of chrX genotype calls across the cohort at once,
-      same shape as `plink_relatedness.sh`. Re-imports chrX from the
-      cohort VCF directly, rather than reusing `relatedness/cohort_qc.*`
-      (step 25): that fileset is `--autosome`-only — chrX kinship needs
-      per-sample sex, which is exactly what this step exists to
-      determine, so using it as an input here would be circular. Same
+    - **`plink_sex_check_prep.sh`** — X-chromosome heterozygosity. Males
+      are hemizygous for X outside the pseudoautosomal regions (PAR1/
+      PAR2, diploid in both sexes), so their non-PAR X genotypes should
+      come back essentially all-homozygous; females show normal
+      heterozygosity, summarized as an X inbreeding coefficient (F): F
+      near 1 (near-zero observed heterozygosity) => male, F near 0
+      (normal heterozygosity) => female. **A first draft of this script
+      called `plink2 --check-sex` directly, which turned out not to
+      exist**: confirmed against this cluster's actual `plink2 --help`
+      output (the full top-level flag listing, checked directly rather
+      than assumed from current web docs) that this build — self-reports
+      as PLINK v2.00a2LM, "24 Jul 2019", an **alpha 2** release — has no
+      `--check-sex`, `--impute-sex`, or `--het` flag at all. `--split-par
+      hg38`, by contrast, *is* confirmed present and correctly spelled in
+      this build's own `--help` text (`'b38'/'hg38' = GRCh38,
+      2781479/155701383`) — no fix needed there, same as `--score`'s
+      modifiers in `ancestry_pca.sh` turned out to already match current
+      docs while `--pca` didn't.
+      Since there's no built-in command, this job (now prep-only, split
+      the same way as `genesis_pcrelate_prep.sh`) instead exports the raw
+      ingredients `--check-sex` would have used internally — per-variant
+      allele frequencies (`--freq`) and per-sample additive 0/1/2
+      genotypes (`--export A`) — and **`r_scripts/sex_check_viz.R`**
+      computes F by hand: `F = 1 - (observed heterozygosity / expected
+      heterozygosity under HWE)`, expected heterozygosity per variant =
+      `2*p*(1-p)` from its allele frequency — the standard
+      method-of-moments inbreeding-coefficient estimator, not a guess at
+      `--check-sex`'s internals. Not a SLURM array — one set of chrX
+      genotype calls across the cohort at once, same shape as
+      `plink_relatedness.sh`. Re-imports chrX from the cohort VCF
+      directly, rather than reusing `relatedness/cohort_qc.*` (step 25):
+      that fileset is `--autosome`-only — chrX kinship needs per-sample
+      sex, which is exactly what this step exists to determine, so using
+      it as an input here would be circular. Same
       `--set-all-var-ids`/`--new-id-max-allele-len 1000 truncate`
       handling as `plink_relatedness.sh`, for the same reason (real
       structural indels can exceed `--set-all-var-ids`'s built-in
-      allele-length cap). `--split-par hg38` relabels the PAR regions to
-      a separate pseudo-chromosome first, so they don't dilute the
-      non-PAR X-heterozygosity signal the check actually needs.
-      `--maf 0.05 --geno 0.05` (no `--mind` — this step needs a call for
-      every sample, not to drop poorly-genotyped ones) mirrors
-      `plink_relatedness.sh`'s QC rationale, for a stable F estimate.
-      **Both `--split-par` and `--check-sex` are unverified against this
-      cluster's specific `plink/2.001` build** (self-reports as "24 Jul
-      2019" — this repo has already hit real cases of this build
-      predating current-docs PLINK2 syntax, see `ancestry_pca.sh`'s
-      `--pca`/`--score` history); if either errors, the established fix
-      here is running `plink2 --help split-par`/`--help check-sex` on the
-      cluster and sharing the actual output, not guessing again. The
-      exact output filename/column layout is similarly unconfirmed —
-      `r_scripts/sex_check_viz.R` checks for `sex_check/cohort_sex_check.sexcheck`
-      and prints its actual columns rather than assuming PLINK1.9's
-      classic `FID IID PEDSEX SNPSEX STATUS F` layout carries over as-is.
+      allele-length cap). `--split-par` and the following `--chr X`
+      restriction run as two separate `plink2` calls, not combined into
+      one, since whether `--chr` filtering sees pre- or post-split
+      chromosome codes within a single invocation isn't something this
+      build's docs make explicit. `--maf 0.05 --geno 0.05` (no `--mind`
+      — this step needs a call for every sample, not to drop
+      poorly-genotyped ones) mirrors `plink_relatedness.sh`'s QC
+      rationale, for a stable F estimate. The `.raw`/`.afreq` column
+      layout is confirmed by printing them, not assumed, in
+      `sex_check_viz.R`, matching the same discipline used for
+      `pcrelate_result$kinBtwn` in step 27.
     - **`samtools_sex_check.sh`** — relative read depth on chrX and chrY,
       normalized against chr1 as an autosomal baseline, from
       `samtools idxstats`. Independent of genotype calling entirely, so
@@ -634,23 +650,28 @@ Each step below: script → what it does → inputs → outputs. Order matches
     clusters: females near `chrX_ratio≈1, chrY_ratio≈0`; males near
     `chrX_ratio≈0.5, chrY_ratio>0` — look at the real spread before
     trusting any specific numeric cutoff, a commented-out example call
-    is provided as a starting point, not a validated threshold), prints
-    the PLINK X-heterozygosity output if present, and sets up (but
-    doesn't hardcode a path for, since none is documented anywhere in
-    this repo) a join against whatever sheet tracks each donor's
-    self-reported/clinical sex — any mismatch between self-reported and
+    is provided as a starting point, not a validated threshold), computes
+    and plots the X-heterozygosity F statistic described above (a
+    histogram — again, look at the real distribution rather than
+    hardcoding a male/female cutoff), and sets up (but doesn't hardcode a
+    path for, since none is documented anywhere in this repo) a join
+    against whatever sheet tracks each donor's self-reported/clinical sex
+    — any mismatch between self-reported and
     genetic sex is a real flag worth resolving before trusting that
     donor's data downstream, not something to silently pick one source
     over the other on.
-    In: `vqsr/cohort.pass.normalized.vcf.gz` (`plink_sex_check.sh`),
+    In: `vqsr/cohort.pass.normalized.vcf.gz` (`plink_sex_check_prep.sh`),
     `bwa_bam/<sample>.bqsr.bam` (step 10, `samtools_sex_check.sh`),
     `params/bowtie_params_id.txt`.
     Out: `sex_check/cohort_chrX*` (intermediate PLINK2 filesets),
-    `sex_check/cohort_sex_check.*` (PLINK's sex call — filename/columns
-    to be confirmed once run), `sex_check/<sample>.sex_depth.txt`
-    (per-sample, intermediate), `sex_check/cohort_sex_depth_ratios.tsv`
-    (`sample`, `chr1_mapped`, `chrX_mapped`, `chrY_mapped`, `chrX_ratio`,
-    `chrY_ratio`).
+    `sex_check/cohort_chrX_qc.afreq`/`.raw` (per-variant allele
+    frequencies and per-sample additive genotypes — the inputs to
+    `sex_check_viz.R`'s F computation),
+    `sex_check/cohort_sex_check_fstat.tsv` (`IID`, `n_variants`,
+    `obs_het`, `exp_het`, `F` — written by `sex_check_viz.R`),
+    `sex_check/<sample>.sex_depth.txt` (per-sample, intermediate),
+    `sex_check/cohort_sex_depth_ratios.tsv` (`sample`, `chr1_mapped`,
+    `chrX_mapped`, `chrY_mapped`, `chrX_ratio`, `chrY_ratio`).
 
 ### Removed: legacy bowtie2 path
 
@@ -815,20 +836,29 @@ script if so — cheap now that it's one pass), then review
 `genesis/cohort_kinship_pcrelate.png` against step 25's plain KING
 output.
 
-**`jobs/plink_sex_check.sh`** / **`jobs/samtools_sex_check.sh`** (step
-28) — confirms biological sex per donor via two independent signals
-(X-heterozygosity from PLINK2, chrX/chrY depth ratio from `samtools
-idxstats`), deliberately without adding a new tool (`somalier`) to the
-stack. Neither has been run yet. `plink_sex_check.sh`'s `--split-par`
-and `--check-sex` calls are unverified against this cluster's specific,
-unusually old PLINK2 build — flagged prominently in the script itself;
-if either errors, run `plink2 --help split-par`/`--help check-sex` and
-share the output, the same approach that resolved `ancestry_pca.sh`'s
-`--pca` syntax issues. Next step: submit `plink_sex_check.sh` and
-`samtools_sex_check.sh` (SLURM array), run `make_sex_depth_table.sh`
-once the array finishes, then `sex_check_viz.R` to review both signals
-and cross-check against the demographics sheet's self-reported sex —
-any mismatch is worth resolving before trusting that donor's data in the
+**`jobs/plink_sex_check_prep.sh`** / **`jobs/samtools_sex_check.sh`**
+(step 28) — confirms biological sex per donor via two independent
+signals (X-heterozygosity from PLINK2, chrX/chrY depth ratio from
+`samtools idxstats`), deliberately without adding a new tool
+(`somalier`) to the stack. The `samtools_sex_check.sh` array has been
+submitted; `plink_sex_check_prep.sh` needed a real fix first. Its
+original design called `plink2 --check-sex` directly — the analyst ran
+`plink2 --help` on the actual cluster build and confirmed that flag
+(along with `--impute-sex` and `--het`) simply doesn't exist on this
+build (PLINK v2.00a2LM, "24 Jul 2019", an alpha 2 release). `--split-par
+hg38`, by contrast, checked out fine against the same `--help` output —
+no change needed there. Since there's no built-in sex-check command on
+this build, `plink_sex_check_prep.sh` was reworked (and renamed, prep-
+only now, matching `genesis_pcrelate_prep.sh`'s split) to export the raw
+ingredients — `--freq` and `--export A` — and `r_scripts/sex_check_viz.R`
+computes the X inbreeding coefficient (F) by hand from those, the
+standard method-of-moments formula rather than a guess at what
+`--check-sex` would have done internally. Not yet run end-to-end with
+this design. Next step: submit `plink_sex_check_prep.sh`, run
+`make_sex_depth_table.sh` once the `samtools_sex_check.sh` array
+finishes, then `sex_check_viz.R` to compute F, review both signals, and
+cross-check against the demographics sheet's self-reported sex — any
+mismatch is worth resolving before trusting that donor's data in the
 QTL-mapping stage.
 
 Once ancestry, relatedness, and sex are all reviewed, the actual QTL
