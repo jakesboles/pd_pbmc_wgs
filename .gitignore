@@ -15,4 +15,5 @@ multiqc_data/*
 *.html
 relatedness/*
 samtools_reports/*
+sex_check/*
 vqsr/*
