@@ -281,43 +281,58 @@ Each step below: script → what it does → inputs → outputs. Order matches
     index), one pair per sample.
 
 24. **`jobs/gatk_crosscheckfingerprints.sh`** — `gatk
-    CrosscheckFingerprints`, comparing each WGS sample's genotypes in the
-    cohort VCF against its matched scATAC BAM's genotype-likelihood
-    signal at haplotype-map SNP sites, to confirm donor identity between
-    the two datasets. A SLURM array, **one task per WGS/ATAC sample pair**
-    (array 1-121, one line of `params/crosscheck_sample_map.txt`/
-    `params/crosscheck_atac_bams.txt` per task) rather than one job comparing the
-    VCF against all matched BAMs at once, so a problem with any single
-    comparison only fails that one task instead of the whole cohort.
-    `--SECOND_INPUT` points at the *reordered subset* BAM from step 23
-    (`crosscheck/atac_subset/<wgs_sample>.subset.reordered.bam`), not the
-    raw `atac_possorted_bam.bam` — see step 23 for why. Before
-    fingerprinting, each task first runs `gatk SelectVariants -sn
-    <wgs_sample> -L params/haplotype_sites.bed` to pull just that one
-    sample out of the 121-sample cohort VCF; `--INPUT` is that per-sample subset, not
-    the full cohort VCF — passing the whole cohort VCF as `INPUT` every
-    task technically still produces the correct result, but
-    `CrosscheckFingerprints` (in `CHECK_SAME_SAMPLE` mode) logs an `ERROR`
-    for every one of the ~120 *other* samples that has no counterpart in
-    that task's single-BAM `SECOND_INPUT` (`sample X is missing from
-    RIGHT group`), burying each task's log in harmless noise. Uses
-    `--INPUT_SAMPLE_MAP` to rename the VCF sample to its scATAC `SM` tag
-    for comparison (so the `JSB`-prefix mismatch doesn't block matching;
-    passing the full map every task is harmless since only that task's
-    one pair is actually present in both INPUT and SECOND_INPUT now),
-    `--CROSSCHECK_BY SAMPLE` (the GATK default is `READGROUP`, which would
-    compare below the level we want), and `--EXIT_CODE_WHEN_MISMATCH 0` so
-    a genotype mismatch — a real possible QC finding, e.g. a sample swap —
-    doesn't get treated as a task failure.
-    In: `vqsr/cohort.pass.normalized.vcf.gz`, `params/haplotype_sites.bed`,
-    `params/crosscheck_sample_map.txt`, `params/crosscheck_atac_bams.txt`,
-    `crosscheck/atac_subset/<wgs_sample>.subset.reordered.bam` (step 23),
-    `/projects/p31535/boles/Homo_sapiens_assembly38.haplotype_database.txt`.
-    Out: `crosscheck/vcf_subset/<wgs_sample>.vcf.gz` (intermediate),
-    `crosscheck/<wgs_sample>.crosscheck_metrics` — one file per sample
-    pair, each with a `LOD_SCORE` and `RESULT` (e.g. `EXPECTED_MATCH`,
-    `EXPECTED_MISMATCH`) to review before trusting any WGS↔multiome
-    sample pairing downstream.
+    CrosscheckFingerprints`, comparing *every* WGS sample's genotypes in
+    the cohort VCF against *every* scATAC BAM's genotype-likelihood
+    signal at haplotype-map SNP sites — a full all-pairs (121×121)
+    comparison, not just the 121 presumed-matched pairs — to definitively
+    confirm donor identity between the two datasets and catch any sample
+    label swap. **Reworked from an earlier per-pair design** (one SLURM
+    array task per presumed WGS/ATAC pair, `--INPUT`/`--SECOND_INPUT`
+    each subsetted to just that one pair, `CROSSCHECK_MODE
+    CHECK_SAME_SAMPLE`) that could only confirm or deny each presumed
+    pairing in isolation: if a sample's true genetic match were actually
+    a *different* ATAC BAM than the one presumed, that design would never
+    even put the two in the same comparison to notice. One job, not an
+    array: `--INPUT` is the full cohort VCF (all 121 samples) with no
+    per-sample `SelectVariants` subsetting; `--SECOND_INPUT` is repeated
+    once per sample for all 121 *reordered subset* BAMs from step 23
+    (`crosscheck/atac_subset/<wgs_sample>.subset.reordered.bam`, built
+    from `params/crosscheck_sample_map.txt`), not the raw
+    `atac_possorted_bam.bam` — see step 23 for why those need reordering.
+    `--INPUT_SAMPLE_MAP params/crosscheck_sample_map.txt` still renames
+    each WGS VCF sample to its scATAC `SM` tag so the `JSB`-prefix
+    mismatch doesn't block matching. `--CROSSCHECK_MODE CHECK_ALL_OTHERS`
+    (not the default `CHECK_SAME_SAMPLE`) is what makes this an all-pairs
+    check: it does everything `CHECK_SAME_SAMPLE` does (confirms each
+    sample's presumed match) *and* additionally confirms every sample
+    does not unexpectedly match any other sample, producing a `RESULT`
+    column of `EXPECTED_MATCH`/`EXPECTED_MISMATCH` (presumed pairing
+    behaved as expected) or `UNEXPECTED_MATCH`/`UNEXPECTED_MISMATCH`
+    (it didn't) for every one of the 121×121 comparisons — an
+    `UNEXPECTED_MATCH` between two different presumed samples is exactly
+    the sample-swap signature to look for. `--CROSSCHECK_BY SAMPLE` (GATK
+    default is `READGROUP`) and `--EXIT_CODE_WHEN_MISMATCH 0` (a genotype
+    mismatch, including a real swap, is an expected QC finding to review,
+    not a task failure) are unchanged from the old design. Because both
+    `INPUT` and `SECOND_INPUT` now carry the full 121-sample cohort on
+    each side, the old design's reason for per-sample `INPUT` subsetting
+    (avoiding ~120 harmless "sample X is missing from RIGHT group" log
+    lines per task, from a 121-vs-1 `INPUT`/`SECOND_INPUT` size mismatch)
+    no longer applies — every sample now has a real counterpart on both
+    sides. Heavier than the old per-pair tasks (one job computing
+    ~14,641 pairwise LOD scores instead of 121 jobs of one each), so
+    resources were bumped to 32G/8h from the old 16G/2h.
+    In: `vqsr/cohort.pass.normalized.vcf.gz`,
+    `params/crosscheck_sample_map.txt`,
+    `crosscheck/atac_subset/<wgs_sample>.subset.reordered.bam` (step 23,
+    all 121), `/projects/p31535/boles/Homo_sapiens_assembly38.haplotype_database.txt`.
+    Out: `crosscheck/cohort_all_pairs.crosscheck_metrics` — one row per
+    VCF-sample × BAM-sample comparison (121×121), each with a `LOD_SCORE`
+    and `RESULT` — review every `UNEXPECTED_MATCH`/`UNEXPECTED_MISMATCH`
+    row before trusting any WGS↔multiome sample pairing downstream; the
+    *absence* of any `UNEXPECTED_MATCH` across the full matrix is what
+    actually rules out a label swap, which the old per-pair design could
+    not do.
 
 25. **`jobs/plink_relatedness.sh`** — a *different* QC axis from steps
     21-24: cryptic relatedness *between WGS subjects themselves*
@@ -717,14 +732,37 @@ fingerprinting, and eventually `outs/gex_possorted_bam.bam` and the
 `filtered_feature_bc_matrix*`/`atac_fragments.tsv.gz` outputs for the QTL
 mapping stage itself.
 
-## WGS↔scATAC identity crosscheck: complete
+## WGS↔scATAC identity crosscheck: previously "complete" under a weaker check, now reworked for a definitive all-pairs recheck
 
-Steps 21-24 (`make_crosscheck_params.sh`, `make_haplotype_sites_bed.sh`,
-`subset_reorder_atac_bams.sh`, `gatk_crosscheckfingerprints.sh`) have been
-run end-to-end on the full cohort. All 121 WGS↔multiome sample pairs
-reported `RESULT=EXPECTED_MATCH` with `LOD_SCORE` well above the
-significance threshold (>>20 for every sample) — donor identity between
-the WGS and scATAC datasets is confirmed cohort-wide.
+Steps 21-23 (`make_crosscheck_params.sh`, `make_haplotype_sites_bed.sh`,
+`subset_reorder_atac_bams.sh`) have been run end-to-end on the full
+cohort and their outputs (the crosswalk, the haplotype-sites BED, and
+all 121 reordered/subset ATAC BAMs) are reusable as-is. Step 24
+(`gatk_crosscheckfingerprints.sh`) was originally run as a per-pair SLURM
+array (one task per presumed WGS/ATAC pair, `--INPUT`/`--SECOND_INPUT`
+each subsetted to just that one sample, `CROSSCHECK_MODE
+CHECK_SAME_SAMPLE`); all 121 presumed pairs reported
+`RESULT=EXPECTED_MATCH` with `LOD_SCORE` well above the significance
+threshold (>>20 for every sample).
+
+**That result only confirmed each presumed pairing looked internally
+consistent — it could not rule out a sample label swap.** Each task's
+`--INPUT`/`--SECOND_INPUT` only ever contained the one presumed-matching
+sample on each side, so even if (say) `JSB100-1`'s true genetic match
+were actually the BAM labeled for `JSB100-2`, that comparison had no
+opportunity to notice — the real match was never in the comparison at
+all. 121 independent one-pair tasks can only answer "does this presumed
+pair match," never "does this sample match anyone *else* instead."
+Revisited after noticing issues downstream in the multiome analysis that
+suggested a possible demographics/sample-identity problem; `step 24`
+above has been reworked into a single job that compares the full
+121-sample cohort VCF against all 121 reordered ATAC BAMs at once
+(`CROSSCHECK_MODE CHECK_ALL_OTHERS`), producing the complete 121×121
+LOD/RESULT matrix so an `UNEXPECTED_MATCH` anywhere — the actual
+swap signature — would be visible. **Not yet re-run with this design;
+the old per-pair result above should not be treated as having ruled out
+a swap.** See step 24 above for the full design and rationale, and
+"Next step" below for what to do with the output once it's run.
 
 Background on why steps 22-23 exist, for future reference: the first
 attempt at `gatk_crosscheckfingerprints.sh` (as a single non-array job
@@ -737,16 +775,26 @@ contigs alphabetically while the WGS VCF/haplotype map (Broad's
 `Homo_sapiens_assembly38.fasta`) list them numerically. That's a
 cohort-wide, not per-sample, issue — every comparison would have failed
 the same way. Steps 22-23 fix it once for the whole cohort rather than
-per sample; the per-sample SLURM array in step 24 is still worth keeping
-even so, since it means a *real* per-sample problem (an actual genotype
-mismatch, a corrupted BAM, etc.) still only fails that one task. A
-second, cosmetic-only issue (each task's log full of ~120 harmless
-`sample X is missing from RIGHT group` errors, from passing the whole
-121-sample VCF as `--INPUT` every task) was cleaned up by having each
-task first extract just its own sample from the cohort VCF before
-fingerprinting.
+per sample, and that output is unaffected by the step-24 rework above —
+it's reused as-is for the all-pairs comparison.
 
 ## Next step
+
+**`jobs/gatk_crosscheckfingerprints.sh`** (step 24, reworked) — submit
+this job (no array bounds to set any more, just `sbatch`) to get the
+definitive all-pairs WGS↔scATAC identity check described above. Review
+`crosscheck/cohort_all_pairs.crosscheck_metrics` for any row with
+`RESULT` of `UNEXPECTED_MATCH` or `UNEXPECTED_MISMATCH` — the former is
+the direct signature of a sample label swap (a WGS sample matching a
+*different* sample's ATAC BAM better than its own presumed one); the
+diagonal (presumed pairs) should all still come back `EXPECTED_MATCH`
+with high `LOD_SCORE` as before, but the point of this rework is the
+off-diagonal cells, which the old per-pair design never computed at all.
+This is directly relevant to the demographics/sample-identity concerns
+raised after adding `sample_demographics.csv` — resolve any unexpected
+match here before trusting that `r_scripts/sex_check_viz.R`'s sex-based
+cross-check (or anything else keyed on sample identity) is comparing the
+right donor's WGS and multiome data to each other.
 
 **`jobs/plink_relatedness.sh`** (step 25) has been debugged to a working
 state (two real bugs found and fixed along the way: an allele-length
