@@ -6,6 +6,7 @@
 
 library(tidyverse)
 library(ggplot2)
+library(ggbeeswarm)
 
 setwd("/projects/b1169/boles/pd_pbmc_wgs")
 
@@ -108,9 +109,30 @@ if (!is.null(fstat)) {
 }
 
 # ---- Cross-check against self-reported/clinical sex ----
-# No demographics file path is hardcoded here -- this repo doesn't
-# document one. Join `depth` (and/or `fstat`) against whatever sheet
-# tracks self-reported sex by sample ID, and treat any mismatch as a real
-# flag (sample mix-up somewhere upstream, or a genuine biological edge
-# case) worth resolving before trusting that donor's data downstream --
-# not something to silently prefer one source over the other on.
+
+demographics <- read.csv("sample_demographics.csv")
+
+df <- demographics %>% 
+  mutate(sample = paste0("JSB", code)) %>%
+  left_join(combined,
+            by = "sample")
+
+df %>% 
+  ggplot(aes(x = sex,
+             y = `F`)) + 
+  geom_quasirandom() + 
+  theme_linedraw()
+
+df %>% 
+  arrange(sex) %>%
+  ggplot(aes(x = chrX_ratio,
+             y = chrY_ratio)) + 
+  geom_point(aes(color = sex),
+                   size = 3) + 
+  labs(y = "chrY coverage",
+       x = "chrX coverage") +
+  theme_linedraw()
+
+df %>% 
+  filter(sex == "male") %>% 
+  arrange(F)
