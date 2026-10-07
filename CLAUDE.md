@@ -332,7 +332,62 @@ Each step below: script → what it does → inputs → outputs. Order matches
     row before trusting any WGS↔multiome sample pairing downstream; the
     *absence* of any `UNEXPECTED_MATCH` across the full matrix is what
     actually rules out a label swap, which the old per-pair design could
-    not do.
+    not do. **`r_scripts/crosscheckfingerprint_scores_viz.R`** reads this
+    file directly (`skip = 6` for the metrics header), tabulates
+    `RESULT`, and plots a `LEFT_GROUP_VALUE` × `RIGHT_GROUP_VALUE`
+    `LOD_SCORE` heatmap (`crosscheck/lod_heatmap.png`) plus a `LOD_SCORE`
+    histogram — the heatmap is the fastest way to eyeball an off-diagonal
+    hotspot.
+
+24b. **`jobs/make_crosscheck_params_gex.sh`** / **`jobs/subset_reorder_gex_bams.sh`**
+    / **`jobs/gatk_crosscheckfingerprints_gex.sh`** — the same all-pairs
+    identity check as step 24, applied to each sample's GEX (scRNA)
+    BAM (`outs/gex_possorted_bam.bam`, in the same Cell Ranger ARC output
+    directory as the ATAC BAM) instead of the ATAC BAM, as an additional,
+    independent sanity check on WGS↔multiome donor identity. Mechanically
+    identical to steps 21+23+24: `make_crosscheck_params_gex.sh` builds a
+    parallel crosswalk (`params/crosscheck_gex_sample_map.txt`,
+    `params/crosscheck_gex_bams.txt`, `params/crosscheck_missing_gex.txt`)
+    the same way `make_crosscheck_params.sh` does, reading each GEX BAM's
+    real RG `SM` tag rather than assuming it matches the ATAC side's (in
+    practice expected to match, since both come from the same Cell Ranger
+    ARC `--id`, but confirmed fresh rather than assumed);
+    `subset_reorder_gex_bams.sh` subsets each GEX BAM to
+    `params/haplotype_sites.bed` and reorders it to the WGS reference's
+    contig order, same as `subset_reorder_atac_bams.sh` (the same
+    alphabetical-vs-numeric mismatch is expected, since one Cell Ranger
+    ARC run shares a single reference bundle across its ATAC and GEX
+    outputs); `gatk_crosscheckfingerprints_gex.sh` is the same single
+    all-pairs `CHECK_ALL_OTHERS` job as step 24's reworked design, just
+    pointed at the GEX crosswalk and reordered BAMs.
+    **Caveat specific to this comparison:** the haplotype map's SNP sites
+    were chosen assuming roughly uniform genome-wide coverage, a
+    reasonable assumption for WGS and (open-chromatin-biased but still
+    genome-wide) ATAC fragments, but not for RNA-seq — GEX reads only
+    cover transcribed, predominantly exonic sequence, and depth at any
+    given site tracks that gene's expression level rather than genomic
+    position. Expect meaningfully fewer informative (covered) sites per
+    sample, and correspondingly weaker (though still decisive for a true
+    match, assuming enough covered sites remain) `LOD_SCORE`s than the
+    ATAC comparison — an expected property of comparing against RNA-seq,
+    not a bug. No RNA-seq-specific preprocessing (e.g. `SplitNCigarReads`)
+    is applied, since `CrosscheckFingerprints` does its own pileup-based
+    comparison rather than calling variants.
+    In: `vqsr/cohort.pass.normalized.vcf.gz`, `params/cohort.sample_map`,
+    `params/haplotype_sites.bed`,
+    `/projects/p31535/boles/Homo_sapiens_assembly38.dict`,
+    `/projects/p31535/boles/Homo_sapiens_assembly38.haplotype_database.txt`,
+    `/projects/b1042/Gate_Lab/boles/pd_pbmc_multiome/cellranger/<code>/outs/gex_possorted_bam.bam`.
+    Out: `params/crosscheck_gex_sample_map.txt`,
+    `params/crosscheck_gex_bams.txt`, `params/crosscheck_missing_gex.txt`,
+    `crosscheck/gex_subset/<wgs_sample>.subset.reordered.bam` (+ index),
+    `crosscheck/cohort_all_pairs_gex.crosscheck_metrics` — review the
+    same way as step 24's ATAC output, keeping the weaker-LOD-score
+    caveat above in mind. `r_scripts/crosscheckfingerprint_scores_viz.R`
+    can be pointed at this file in place of the ATAC one (swap its
+    hardcoded input path, and the heatmap's output filename/axis label)
+    to get the same `RESULT` tabulation, LOD heatmap, and histogram for
+    the GEX comparison.
 
 25. **`jobs/plink_relatedness.sh`** — a *different* QC axis from steps
     21-24: cryptic relatedness *between WGS subjects themselves*
@@ -778,6 +833,15 @@ the same way. Steps 22-23 fix it once for the whole cohort rather than
 per sample, and that output is unaffected by the step-24 rework above —
 it's reused as-is for the all-pairs comparison.
 
+**Step 24b** mirrors this entire step-24 design against each sample's
+GEX (scRNA) BAM instead of the ATAC BAM — a second, independent
+all-pairs identity check, added for the same reason as the step-24
+rework (a possible demographics/sample-identity problem surfaced in the
+multiome analysis) and not yet run. See step 24b above for the full
+design and its RNA-seq-coverage caveat (expect fewer informative sites
+and weaker `LOD_SCORE`s than the ATAC comparison — not itself a sign of
+a problem).
+
 ## Next step
 
 **`jobs/gatk_crosscheckfingerprints.sh`** (step 24, reworked) — submit
@@ -790,7 +854,22 @@ the direct signature of a sample label swap (a WGS sample matching a
 diagonal (presumed pairs) should all still come back `EXPECTED_MATCH`
 with high `LOD_SCORE` as before, but the point of this rework is the
 off-diagonal cells, which the old per-pair design never computed at all.
-This is directly relevant to the demographics/sample-identity concerns
+
+**`jobs/make_crosscheck_params_gex.sh`** / **`jobs/subset_reorder_gex_bams.sh`**
+/ **`jobs/gatk_crosscheckfingerprints_gex.sh`** (step 24b) — run this
+same sequence (crosswalk → subset/reorder → single all-pairs job) for
+the GEX BAMs. `subset_reorder_gex_bams.sh`'s `--array` bound needs
+setting to match `wc -l params/crosscheck_gex_bams.txt` once
+`make_crosscheck_params_gex.sh` has run (may differ slightly from the
+ATAC crosswalk's 121 if any sample's Cell Ranger ARC directory is
+missing one BAM type but not the other). Review
+`crosscheck/cohort_all_pairs_gex.crosscheck_metrics` the same way as the
+ATAC output; any `UNEXPECTED_MATCH` here independently corroborates (or
+contradicts) whatever the ATAC-based all-pairs check above finds, which
+is the point of running both — two independent assays agreeing on donor
+identity is stronger evidence than either alone, and if they disagree,
+that disagreement itself is worth chasing down. This is directly
+relevant to the demographics/sample-identity concerns
 raised after adding `sample_demographics.csv` — resolve any unexpected
 match here before trusting that `r_scripts/sex_check_viz.R`'s sex-based
 cross-check (or anything else keyed on sample identity) is comparing the
