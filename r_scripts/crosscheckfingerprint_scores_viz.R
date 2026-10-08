@@ -3,7 +3,9 @@ library(ggplot2)
 
 setwd("/projects/b1169/boles/pd_pbmc_wgs")
 
-df <- read_table("crosscheck/cohort_all_pairs.crosscheck_metrics",
+# df <- read_table("crosscheck/cohort_all_pairs.crosscheck_metrics",
+#                  skip = 6)
+df <- read_table("crosscheck/cohort_all_pairs_gex.crosscheck_metrics",
                  skip = 6)
 
 # write.csv(df,
@@ -19,11 +21,14 @@ df %>%
              y = RIGHT_GROUP_VALUE)) +
   geom_tile(aes(fill = LOD_SCORE)) + 
   scale_fill_gradient2(high = "midnightblue") +
-  labs(y = "ATAC library",
+  labs(y = "ATAC library", # y = "GEX library"
        x = "WGS library") +
   theme(axis.text = element_blank(),
         axis.ticks = element_blank())
-ggsave(filename = "crosscheck/lod_heatmap.png",
+# ggsave(filename = "crosscheck/lod_heatmap.png",
+#        units = "in", dpi = 600,
+#        height = 4, width = 6)
+ggsave(filename = "crosscheck/lod_gex_heatmap.png",
        units = "in", dpi = 600,
        height = 4, width = 6)
 
@@ -36,7 +41,10 @@ df %>%
   labs(y = "N",
        x = "LOD score") +
   theme_linedraw()
-ggsave(filename = "crosscheck/lod_histogram.png",
+# ggsave(filename = "crosscheck/lod_histogram.png",
+#        units = "in", dpi = 600,
+#        height = 4, width = 6)
+ggsave(filename = "crosscheck/lod_gex_histogram.png",
        units = "in", dpi = 600,
        height = 4, width = 6)
   
